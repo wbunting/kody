@@ -88,6 +88,7 @@ import {
 	AccountDeletionInProgressError,
 	assertAccountWritableDb,
 } from '#worker/account/deletion-state.ts'
+import { isAccountRegistrationClosed } from '#app/account-registration.ts'
 
 /**
  * Accounts created through social login have no usable password until the
@@ -707,6 +708,10 @@ export function createAuthProviderCallbackHandler(env: Env) {
 			}
 
 			// 4. New account.
+			if (isAccountRegistrationClosed(env)) {
+				return fail('registration-closed', 'registration_closed')
+			}
+
 			let username: string
 			let stableUserId: string
 			let newUser: {

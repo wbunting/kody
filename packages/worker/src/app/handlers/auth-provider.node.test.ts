@@ -1269,6 +1269,67 @@ test('OAuth signup is open and existing connections sign in', async () => {
 	).toEqual({ count: 1 })
 })
 
+test('closed registration blocks OAuth account creation but existing connections still sign in', async () => {
+	const closedSignup = createMigratedDb()
+	const closedSignupEnv = createAppEnv(closedSignup.db, {
+		ACCOUNT_REGISTRATION: 'closed',
+	})
+	mockGithubProfileExchange('blocked-oauth@example.com')
+	const closedStart = await startProviderFlow(
+		closedSignupEnv,
+		'github',
+		'http://example.com/auth/github',
+	)
+	const closedCallback = await runHandler(
+		createAuthProviderCallbackHandler(closedSignupEnv),
+		new Request(
+			`http://example.com/auth/github/callback?code=github-auth-code&state=${closedStart.state}`,
+			{ headers: { Cookie: closedStart.stateCookie } },
+		),
+		{ provider: 'github' },
+	)
+	expect(closedCallback.status).toBe(302)
+	expect(closedCallback.headers.get('Location')).toBe(
+		'/login?oauthError=registration-closed',
+	)
+	expect(
+		closedSignup.sqlite.prepare(`SELECT COUNT(*) AS count FROM users`).get(),
+	).toEqual({ count: 0 })
+
+	const existingLogin = createMigratedDb()
+	const existingEnv = createAppEnv(existingLogin.db, {
+		ACCOUNT_REGISTRATION: 'closed',
+	})
+	await seedUser(existingLogin.sqlite, {
+		id: 12,
+		email: 'existing-closed@example.com',
+		username: 'existing-closed',
+	})
+	existingLogin.sqlite.exec(`
+		INSERT INTO oauth_connections (provider_name, provider_id, user_id, provider_display_name)
+		VALUES ('github', '99001', 12, 'existing-closed');
+	`)
+	mockGithubProfileExchange('existing-closed@example.com')
+	const existingStart = await startProviderFlow(
+		existingEnv,
+		'github',
+		'http://example.com/auth/github',
+	)
+	const existingCallback = await runHandler(
+		createAuthProviderCallbackHandler(existingEnv),
+		new Request(
+			`http://example.com/auth/github/callback?code=github-auth-code&state=${existingStart.state}`,
+			{ headers: { Cookie: existingStart.stateCookie } },
+		),
+		{ provider: 'github' },
+	)
+	expect(existingCallback.status).toBe(302)
+	expect(existingCallback.headers.get('Location')).toBe('/account')
+	expect(
+		existingLogin.sqlite.prepare(`SELECT COUNT(*) AS count FROM users`).get(),
+	).toEqual({ count: 1 })
+})
+
 test('OAuth signup persists first-touch UTMs from the start URL through login state', async () => {
 	lifecycleMocks.scheduleUserCreatedEvent.mockClear()
 	const { sqlite, db } = createMigratedDb()

@@ -215,6 +215,16 @@ URLs and headers where the MCP runtime supports them. Host allowlists and
 capability policies apply per secret. There are no GitHub-specific Worker
 environment variables.
 
+## Account registration policy
+
+Optional Worker var:
+
+- `ACCOUNT_REGISTRATION` — set to the exact value `closed` for a private or
+  self-hosted deployment that provisions accounts out of band. Existing password
+  and social-login accounts can still sign in and connect providers; password
+  signup and social-login account creation return a controlled closed-
+  registration response. Leave unset for the normal open-signup behavior.
+
 ## Social login (GitHub / Google / X / Discord)
 
 Optional Worker secrets (see `packages/worker/src/app/oauth-providers.ts` and

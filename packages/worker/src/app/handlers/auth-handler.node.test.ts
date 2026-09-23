@@ -65,6 +65,7 @@ function createAuthTestContext(
 		emailConfigured?: boolean
 		kv?: KVNamespace
 		sentryEnvironment?: 'test' | 'preview' | 'production'
+		accountRegistration?: string
 	} = {},
 ) {
 	const testDb = createTestDb({
@@ -74,6 +75,7 @@ function createAuthTestContext(
 		COOKIE_SECRET: testCookieSecret,
 		APP_DB: testDb.db,
 		SENTRY_ENVIRONMENT: options.sentryEnvironment ?? 'test',
+		ACCOUNT_REGISTRATION: options.accountRegistration,
 		...(options.kv ? { BUNDLE_ARTIFACTS_KV: options.kv } : {}),
 		...(options.emailConfigured
 			? {
@@ -610,6 +612,30 @@ test('auth handler login and signup workflow', async () => {
 		'login:success',
 		'login:success',
 	])
+})
+
+test('closed registration rejects signup before creating an account', async () => {
+	const context = createAuthTestContext({ accountRegistration: 'closed' })
+	const response = await context.request({
+		email: 'blocked@example.com',
+		username: 'blocked-user',
+		password: 'password123',
+		mode: 'signup',
+	})
+
+	expect(response.status).toBe(403)
+	expect(await response.json()).toEqual({
+		error: 'Account registration is closed.',
+	})
+	expect(context.testDb.users.has('blocked@example.com')).toBe(false)
+	expect(logAuditEventSpy).toHaveBeenCalledWith(
+		expect.objectContaining({
+			category: 'auth',
+			action: 'signup',
+			result: 'failure',
+			reason: 'registration_closed',
+		}),
+	)
 })
 
 test('successful open signup schedules an admin user.created event', async () => {

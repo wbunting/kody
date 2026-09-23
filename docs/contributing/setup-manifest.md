@@ -400,6 +400,9 @@ automatically:
   `openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out oidc.pem`.
   Local dev and tests use the committed example key in `.env.example`;
   production must set a dedicated secret via `sync-worker-secrets`)
+- `ACCOUNT_REGISTRATION` (optional; set to `closed` for private/self-hosted
+  deployments after provisioning accounts out of band. Existing accounts keep
+  working, while password signup and social-login account creation are blocked.)
 - `APP_BASE_URL` (optional; used as the fallback public origin when no request
   URL is available — e.g. workflows and email. Example `https://kody.codes`.
   Most request-scoped app/MCP URLs use the inbound request origin so OAuth

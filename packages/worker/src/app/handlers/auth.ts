@@ -59,6 +59,7 @@ import {
 import { touchLastActiveAt } from '#worker/identity/activation-stamps.ts'
 import { scheduleUserCreatedEvent } from '#worker/identity/schedule-user-lifecycle-event.ts'
 import { attributeReferralAtSignup } from '#worker/entitlements/referral-program.ts'
+import { isAccountRegistrationClosed } from '#app/account-registration.ts'
 
 const authModes = ['login', 'signup'] as const
 type AuthMode = (typeof authModes)[number]
@@ -198,6 +199,23 @@ export function createAuthHandler(env: Env) {
 					{ status: 400 },
 				)
 			}
+			if (normalizedMode === 'signup' && isAccountRegistrationClosed(env)) {
+				void logAuditEvent({
+					db: auditDatabaseFromEnv(env),
+					category: 'auth',
+					action: 'signup',
+					result: 'failure',
+					email: normalizedEmail,
+					ip: requestIp,
+					path: url.pathname,
+					reason: 'registration_closed',
+				})
+				return Response.json(
+					{ error: 'Account registration is closed.' },
+					{ status: 403 },
+				)
+			}
+
 			if (normalizedMode === 'signup') {
 				const usernameError = await getEffectiveUsernameValidationError(
 					normalizedUsername,

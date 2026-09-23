@@ -166,6 +166,10 @@ export const EnvSchema = object({
 	),
 	SECRET_STORE_KEY: secretStoreKeySchema,
 	APP_DB: d1DatabaseSchema,
+	// Set to `closed` for private/self-hosted deployments that provision
+	// accounts out of band. Existing password and social-login accounts can
+	// still sign in and connect providers.
+	ACCOUNT_REGISTRATION: optionalNonEmptyStringSchema,
 	BUNDLE_ARTIFACTS_KV: createSchema<unknown, KVNamespace>((value, context) => {
 		if (value) {
 			return { value: value as KVNamespace }

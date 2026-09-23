@@ -22,6 +22,7 @@ export const oauthLoginErrorMessages = {
 		'This email address cannot be used for a new account. Contact support@kody.codes.',
 	'email-claimed': formerEmailClaimedSignupMessage,
 	'account-error': 'We could not create your account. Please try again.',
+	'registration-closed': 'Account registration is closed.',
 	'rate-limited': 'Too many sign-in attempts. Please try again later.',
 } as const
 
