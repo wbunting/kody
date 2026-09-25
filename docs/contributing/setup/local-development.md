@@ -61,7 +61,11 @@ Prerequisites, install, and `npm run dev` notes. See the
   put that same sending domain on action and asset links when
   `SYSTEM_EMAIL_DOMAIN` is set, so a stale `APP_BASE_URL` cannot pin a retired
   hostname into the message. Local `npm run dev` keeps those action and asset
-  links on the request origin so they stay clickable. Set
+  links on the request origin so they stay clickable. Set Set
+  `KODY_CLOUDFLARE_MOCK_TOKEN` to keep the mock's per-token email and Artifacts
+  partition stable across process restarts (recommended for a long-running
+  local/self-hosted install); when unset, each `npm run dev` process gets a
+  fresh random token and therefore a fresh mock partition. Set
   `SKIP_CLOUDFLARE_MOCK=1` to skip the local Cloudflare mock entirely. Vite
   streams origin logs live; the background mock buffers logs and only prints
   them if that child process exits with an error.

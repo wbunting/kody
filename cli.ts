@@ -389,7 +389,8 @@ async function attachCloudflareMock(
 		port: Array.from({ length: 20 }, (_, index) => anchorPort + 240 + index),
 	})
 	const baseUrl = `http://127.0.0.1:${cloudflarePort}`
-	const apiToken = `mock-cloudflare-${randomUUID()}`
+	const configuredToken = process.env.KODY_CLOUDFLARE_MOCK_TOKEN?.trim()
+	const apiToken = configuredToken || `mock-cloudflare-${randomUUID()}`
 	const child = runNpmScript(
 		'dev:mock-cloudflare',
 		[

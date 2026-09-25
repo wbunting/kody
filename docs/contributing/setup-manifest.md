@@ -466,6 +466,10 @@ automatically:
   [environment-variables.md](./environment-variables.md))
 - `APP_COMMIT_SHA` (used as the Sentry **release** when present, in addition to
   `/health` versioning)
+- `KODY_CLOUDFLARE_MOCK_TOKEN` (local process variable; optional. Pins the local
+  Cloudflare mock's email and Artifacts partition across `npm run dev` restarts.
+  Recommended for long-running local/self-hosted installs; when unset, the dev
+  CLI generates a fresh token and mock partition per process.)
 - `CLOUDFLARE_API_BASE_URL` (optional; defaults to `https://api.cloudflare.com`.
   Production email uses the default public API base when this is unset. Local
   `npm run dev` targets the Cloudflare mock unless `SKIP_CLOUDFLARE_MOCK=1`. The
