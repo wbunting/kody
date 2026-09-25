@@ -83,7 +83,14 @@ export async function writeLocalRuntimeDevConfig({
 	} else if (process.env.APP_BASE_URL) {
 		vars.APP_BASE_URL = process.env.APP_BASE_URL
 	}
-	for (const key of ['COOKIE_SECRET', 'SECRET_STORE_KEY']) {
+	for (const key of [
+		'COOKIE_SECRET',
+		'SECRET_STORE_KEY',
+		'CLOUDFLARE_API_BASE_URL',
+		'CLOUDFLARE_API_TOKEN',
+		'CLOUDFLARE_ACCOUNT_ID',
+		'CLOUDFLARE_API_SOURCE_SNAPSHOTS',
+	]) {
 		const value = process.env[key]
 		if (value) vars[key] = value
 	}

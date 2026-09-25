@@ -4,6 +4,7 @@ import path from 'node:path'
 import { expect, test } from 'vitest'
 import { parseJsonc } from './ci/resource-utils.ts'
 import { localizeMigrations } from './local-dev-migrations.ts'
+import { writeLocalPlatformDevConfig } from './local-platform-dev-config.ts'
 import {
 	writeLocalRuntimeDevConfig,
 	writeRuntimeDryRunConfig,
@@ -114,6 +115,56 @@ test('writeRuntimeStartupCheckConfig writes wrangler.jsonc with an absolute main
 	}
 })
 
+test('writeLocalPlatformDevConfig passes mock Cloudflare access to the MCP owner', async () => {
+	const tempDir = await mkdtemp(path.join(os.tmpdir(), 'kody-local-platform-'))
+	const sourcePath = path.join(tempDir, 'wrangler.jsonc')
+	try {
+		const source = await readFile(
+			'packages/platform-worker/wrangler.jsonc',
+			'utf8',
+		)
+		await writeFile(sourcePath, source)
+		const priorMockBaseUrl = process.env.CLOUDFLARE_API_BASE_URL
+		const priorMockToken = process.env.CLOUDFLARE_API_TOKEN
+		const priorMockAccountId = process.env.CLOUDFLARE_ACCOUNT_ID
+		const priorSnapshotFlag = process.env.CLOUDFLARE_API_SOURCE_SNAPSHOTS
+		process.env.CLOUDFLARE_API_BASE_URL = 'http://127.0.0.1:9028'
+		process.env.CLOUDFLARE_API_TOKEN = 'mock-token'
+		process.env.CLOUDFLARE_ACCOUNT_ID = 'cf_account_mock_123'
+		process.env.CLOUDFLARE_API_SOURCE_SNAPSHOTS = 'true'
+		const outputPath = await writeLocalPlatformDevConfig({
+			platformConfigPath: sourcePath,
+			envName: 'production',
+			mainWorkerDevName: 'kody-production',
+			port: '3742',
+		})
+		if (priorMockBaseUrl === undefined)
+			delete process.env.CLOUDFLARE_API_BASE_URL
+		else process.env.CLOUDFLARE_API_BASE_URL = priorMockBaseUrl
+		if (priorMockToken === undefined) delete process.env.CLOUDFLARE_API_TOKEN
+		else process.env.CLOUDFLARE_API_TOKEN = priorMockToken
+		if (priorMockAccountId === undefined)
+			delete process.env.CLOUDFLARE_ACCOUNT_ID
+		else process.env.CLOUDFLARE_ACCOUNT_ID = priorMockAccountId
+		if (priorSnapshotFlag === undefined) {
+			delete process.env.CLOUDFLARE_API_SOURCE_SNAPSHOTS
+		} else {
+			process.env.CLOUDFLARE_API_SOURCE_SNAPSHOTS = priorSnapshotFlag
+		}
+		const generated = parseJsonc<{
+			env?: { production?: { vars?: Record<string, string> } }
+		}>(await readFile(outputPath, 'utf8'))
+		expect(generated.env?.production?.vars).toMatchObject({
+			CLOUDFLARE_API_BASE_URL: 'http://127.0.0.1:9028',
+			CLOUDFLARE_API_TOKEN: 'mock-token',
+			CLOUDFLARE_ACCOUNT_ID: 'cf_account_mock_123',
+			CLOUDFLARE_API_SOURCE_SNAPSHOTS: 'true',
+		})
+	} finally {
+		await rm(tempDir, { recursive: true, force: true })
+	}
+})
+
 test('writeLocalRuntimeDevConfig writes a top-level chain wrangler can apply', async () => {
 	const tempDir = await mkdtemp(path.join(os.tmpdir(), 'kody-local-runtime-'))
 	const sourcePath = path.join(tempDir, 'wrangler.jsonc')
@@ -123,15 +174,41 @@ test('writeLocalRuntimeDevConfig writes a top-level chain wrangler can apply', a
 			'utf8',
 		)
 		await writeFile(sourcePath, source)
+		const priorMockBaseUrl = process.env.CLOUDFLARE_API_BASE_URL
+		const priorMockToken = process.env.CLOUDFLARE_API_TOKEN
+		const priorMockAccountId = process.env.CLOUDFLARE_ACCOUNT_ID
+		const priorSnapshotFlag = process.env.CLOUDFLARE_API_SOURCE_SNAPSHOTS
+		process.env.CLOUDFLARE_API_BASE_URL = 'http://127.0.0.1:9028'
+		process.env.CLOUDFLARE_API_TOKEN = 'mock-token'
+		process.env.CLOUDFLARE_ACCOUNT_ID = 'cf_account_mock_123'
+		process.env.CLOUDFLARE_API_SOURCE_SNAPSHOTS = 'true'
 		const outputPath = await writeLocalRuntimeDevConfig({
 			runtimeConfigPath: sourcePath,
 			envName: 'production',
 			mainWorkerDevName: 'kody-production',
 			port: '3742',
 		})
+		if (priorMockBaseUrl === undefined)
+			delete process.env.CLOUDFLARE_API_BASE_URL
+		else process.env.CLOUDFLARE_API_BASE_URL = priorMockBaseUrl
+		if (priorMockToken === undefined) delete process.env.CLOUDFLARE_API_TOKEN
+		else process.env.CLOUDFLARE_API_TOKEN = priorMockToken
+		if (priorMockAccountId === undefined)
+			delete process.env.CLOUDFLARE_ACCOUNT_ID
+		else process.env.CLOUDFLARE_ACCOUNT_ID = priorMockAccountId
+		if (priorSnapshotFlag === undefined) {
+			delete process.env.CLOUDFLARE_API_SOURCE_SNAPSHOTS
+		} else {
+			process.env.CLOUDFLARE_API_SOURCE_SNAPSHOTS = priorSnapshotFlag
+		}
 		const generated = parseJsonc<{
 			migrations?: unknown
-			env?: { production?: { migrations?: unknown } }
+			env?: {
+				production?: {
+					migrations?: unknown
+					vars?: Record<string, string>
+				}
+			}
 		}>(await readFile(outputPath, 'utf8'))
 		expect(sqliteMapAccepts(generated.migrations)).toBe(true)
 		expect(generated.migrations).toEqual(generated.env?.production?.migrations)
@@ -141,6 +218,12 @@ test('writeLocalRuntimeDevConfig writes a top-level chain wrangler can apply', a
 		expect(JSON.stringify(generated.migrations)).not.toContain(
 			'transferred_classes',
 		)
+		expect(generated.env?.production?.vars).toMatchObject({
+			CLOUDFLARE_API_BASE_URL: 'http://127.0.0.1:9028',
+			CLOUDFLARE_API_TOKEN: 'mock-token',
+			CLOUDFLARE_ACCOUNT_ID: 'cf_account_mock_123',
+			CLOUDFLARE_API_SOURCE_SNAPSHOTS: 'true',
+		})
 	} finally {
 		await rm(tempDir, { recursive: true, force: true })
 	}
