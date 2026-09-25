@@ -54,7 +54,6 @@ export default defineConfig(async ({ command }) => {
 	const auxiliaryWorkers: Array<{
 		configPath: string
 		devOnly: true
-		viteEnvironment?: { name: string }
 	}> = []
 	let serveWranglerConfigPath = wranglerConfigPath
 
@@ -73,15 +72,10 @@ export default defineConfig(async ({ command }) => {
 			{
 				configPath: 'packages/jobs-worker/wrangler.jsonc',
 				devOnly: true,
-				// Keep the Vite environment name aligned with the service name.
-				// The default replaces dashes with underscores, but Miniflare's
-				// service registry resolves the origin binding by `kody-jobs`.
-				viteEnvironment: { name: 'kody-jobs' },
 			},
 			{
 				configPath: 'packages/highlight-worker/wrangler.jsonc',
 				devOnly: true,
-				viteEnvironment: { name: 'kody-highlight' },
 			},
 		)
 		if (envName !== 'test') {
