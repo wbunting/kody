@@ -9,6 +9,7 @@ import {
 	collectLocalOriginDevVars,
 	writeLocalOriginDevConfig,
 } from './tools/local-origin-dev-config.ts'
+import { writeLocalAuxiliaryDevConfig } from './tools/local-auxiliary-dev-config.ts'
 import { writeLocalPlatformDevConfig } from './tools/local-platform-dev-config.ts'
 import { writeLocalRuntimeDevConfig } from './tools/local-runtime-dev-config.ts'
 import { ensureGuideCatalogModules } from './tools/build-guide-catalog-modules.ts'
@@ -68,15 +69,21 @@ export default defineConfig(async ({ command }) => {
 		})
 		// Jobs + highlight stay attached in the test env (Playwright e2e).
 		// Platform/runtime have no test env and stay skipped there.
+		const jobsDevConfigPath = await writeLocalAuxiliaryDevConfig({
+			configPath: 'packages/jobs-worker/wrangler.jsonc',
+			envName,
+			workerName: 'kody-jobs',
+			mainWorkerDevName: `kody-${envName}`,
+		})
+		const highlightDevConfigPath = await writeLocalAuxiliaryDevConfig({
+			configPath: 'packages/highlight-worker/wrangler.jsonc',
+			envName,
+			workerName: 'kody-highlight',
+			mainWorkerDevName: `kody-${envName}`,
+		})
 		auxiliaryWorkers.push(
-			{
-				configPath: 'packages/jobs-worker/wrangler.jsonc',
-				devOnly: true,
-			},
-			{
-				configPath: 'packages/highlight-worker/wrangler.jsonc',
-				devOnly: true,
-			},
+			{ configPath: jobsDevConfigPath, devOnly: true },
+			{ configPath: highlightDevConfigPath, devOnly: true },
 		)
 		if (envName !== 'test') {
 			const runtimeDevConfigPath = await writeLocalRuntimeDevConfig({
