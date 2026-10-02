@@ -225,6 +225,15 @@ Optional Worker var:
   signup and social-login account creation return a controlled closed-
   registration response. Leave unset for the normal open-signup behavior.
 
+## Execute call limit
+
+Optional Worker var:
+
+- `EXECUTE_CALL_LIMIT` — set to the exact value `off` on a private or
+  self-hosted deployment to stop enforcing the plan's `execute_calls_per_day`
+  ceilings (daily and weekly) for MCP `execute`. Calls are still counted, so
+  usage pages stay accurate. Leave unset on hosted Kody.
+
 ## Social login (GitHub / Google / X / Discord)
 
 Optional Worker secrets (see `packages/worker/src/app/oauth-providers.ts` and

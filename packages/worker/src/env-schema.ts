@@ -232,6 +232,9 @@ export const EnvSchema = object({
 	// `/` on a dual-served package-app host goes to the app origin; it is
 	// never redirected onto the canonical package-app apex.
 	PACKAGE_APP_LEGACY_REDIRECT: optionalNonEmptyStringSchema,
+	// Self-hosted: `off` stops enforcing execute_calls_per_day (daily and
+	// weekly). Calls are still counted for usage surfaces.
+	EXECUTE_CALL_LIMIT: optionalNonEmptyStringSchema,
 	USER_EMAIL_DOMAIN: optionalNonEmptyStringSchema,
 	// Overrides the system email domain derived from APP_BASE_URL. Committed
 	// in production so email and the web origin can move independently.

@@ -24,6 +24,7 @@ import {
 	getCachedUserPlan,
 	getUserEntitlement,
 	getUserPlan,
+	isExecuteCallLimitDisabled,
 	readCurrentEntitlementResourceUsage,
 	refundDailyEntitlement,
 } from './service.ts'
@@ -953,6 +954,43 @@ test('public execute and outbound enforce daily and weekly windows; legacy and m
 			now: wednesday,
 		}),
 	).toBe(1)
+})
+
+test('unlimited consume counts execute calls past daily and weekly caps', async () => {
+	const { db, userId } = await createPlannedUserDb('free')
+	const meter = createInMemoryUserMeterEnv()
+	const monday = new Date('2026-07-06T15:00:00.000Z')
+	const wednesday = new Date('2026-07-08T15:00:00.000Z')
+	const resource = 'execute_calls_per_day'
+	const consume = (unlimited: boolean) =>
+		consumeDailyEntitlement({
+			db,
+			env: meter.env,
+			userId,
+			email: plannedEmail,
+			resource,
+			now: wednesday,
+			unlimited,
+		})
+	await meter.seed({ userId, resource, day: utcDayKey(monday), count: 400 })
+	await meter.seed({
+		userId,
+		resource,
+		day: utcDayKey(wednesday),
+		count: planLimits.free.maxExecuteCallsPerDay,
+	})
+	await expectLimitError(consume(false))
+	await consume(true)
+	expect(
+		await readMeterDailyCount(meter.env, userId, resource, wednesday),
+	).toBe(planLimits.free.maxExecuteCallsPerDay + 1)
+})
+
+test('isExecuteCallLimitDisabled only accepts off', () => {
+	expect(isExecuteCallLimitDisabled({ EXECUTE_CALL_LIMIT: 'off' })).toBe(true)
+	expect(isExecuteCallLimitDisabled({ EXECUTE_CALL_LIMIT: ' OFF ' })).toBe(true)
+	expect(isExecuteCallLimitDisabled({ EXECUTE_CALL_LIMIT: 'true' })).toBe(false)
+	expect(isExecuteCallLimitDisabled({})).toBe(false)
 })
 
 test('refundDailyEntitlement decrements the user/day counter and floors at zero', async () => {

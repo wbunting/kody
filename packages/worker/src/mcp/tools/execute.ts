@@ -57,7 +57,10 @@ import {
 	createRawFetchHostSink,
 	type RawFetchHostNudgeState,
 } from '#mcp/raw-fetch-host-nudge.ts'
-import { consumeDailyEntitlement } from '#worker/entitlements/service.ts'
+import {
+	consumeDailyEntitlement,
+	isExecuteCallLimitDisabled,
+} from '#worker/entitlements/service.ts'
 import { createExecutePackageInvokeTools } from '#worker/package-invocations/service.ts'
 import {
 	abandonRunRecord,
@@ -366,6 +369,7 @@ export async function registerExecuteTool(
 							userId: callerContext.user.userId,
 							email: callerContext.user.email,
 							resource: 'execute_calls_per_day',
+							unlimited: isExecuteCallLimitDisabled(env),
 						})
 					}
 
