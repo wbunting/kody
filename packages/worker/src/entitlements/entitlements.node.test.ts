@@ -983,7 +983,12 @@ test('unlimited consume counts execute calls past daily and weekly caps', async 
 	await expect(consume(false)).rejects.toBeInstanceOf(EntitlementLimitError)
 	await consume(true)
 	expect(
-		await readMeterDailyCount({ env: meter.env, userId, resource, now: wednesday }),
+		await readMeterDailyCount({
+			env: meter.env,
+			userId,
+			resource,
+			now: wednesday,
+		}),
 	).toBe(planLimits.free.maxExecuteCallsPerDay + 1)
 })
 
