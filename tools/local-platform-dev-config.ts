@@ -91,6 +91,8 @@ export async function writeLocalPlatformDevConfig({
 		'CLOUDFLARE_API_TOKEN',
 		'CLOUDFLARE_ACCOUNT_ID',
 		'CLOUDFLARE_API_SOURCE_SNAPSHOTS',
+		// Self-hosted policy; MCP execute runs on the platform worker.
+		'EXECUTE_CALL_LIMIT',
 	]) {
 		const value = process.env[key]
 		if (value) vars[key] = value
