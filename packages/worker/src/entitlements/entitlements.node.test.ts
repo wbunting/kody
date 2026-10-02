@@ -957,8 +957,9 @@ test('public execute and outbound enforce daily and weekly windows; legacy and m
 })
 
 test('unlimited consume counts execute calls past daily and weekly caps', async () => {
-	const { db, userId } = await createPlannedUserDb('free')
+	const { db } = createEntitlementsTestDb()
 	const meter = createInMemoryUserMeterEnv()
+	const userId = 'user-1'
 	const monday = new Date('2026-07-06T15:00:00.000Z')
 	const wednesday = new Date('2026-07-08T15:00:00.000Z')
 	const resource = 'execute_calls_per_day'
@@ -967,7 +968,7 @@ test('unlimited consume counts execute calls past daily and weekly caps', async 
 			db,
 			env: meter.env,
 			userId,
-			email: plannedEmail,
+			email: null,
 			resource,
 			now: wednesday,
 			unlimited,
@@ -979,10 +980,10 @@ test('unlimited consume counts execute calls past daily and weekly caps', async 
 		day: utcDayKey(wednesday),
 		count: planLimits.free.maxExecuteCallsPerDay,
 	})
-	await expectLimitError(consume(false))
+	await expect(consume(false)).rejects.toBeInstanceOf(EntitlementLimitError)
 	await consume(true)
 	expect(
-		await readMeterDailyCount(meter.env, userId, resource, wednesday),
+		await readMeterDailyCount({ env: meter.env, userId, resource, now: wednesday }),
 	).toBe(planLimits.free.maxExecuteCallsPerDay + 1)
 })
 
