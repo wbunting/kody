@@ -5,7 +5,6 @@ import {
 	type PackageInvokeTools,
 } from '#mcp/run-kody-registry.ts'
 import { type RunRecordContext } from '#worker/run-records/types.ts'
-import { assertMcpClientCanUsePackage } from '#worker/mcp-client-access/enforce.ts'
 import {
 	maxPackageRuntimeInvokeDepth,
 	type PackageInvocationResponse,
@@ -129,16 +128,6 @@ function createPackageInvokeTools(input: {
 			callingPackageId: packageContext?.packageId ?? null,
 		})
 		throwIfPackageInvokeAborted(signal)
-		// Per-OAuth-client package gate (self-host fork): ad hoc execute may only
-		// invoke allowlisted packages. Package code invoking its own
-		// dependencies is not gated here (allowlists name entry points).
-		if (input.callerKind === 'execute' && check.preloads) {
-			assertMcpClientCanUsePackage({
-				policy: input.callerContext,
-				packageId: check.preloads.savedPackage.id,
-				packageName: check.preloads.savedPackage.name,
-			})
-		}
 		if (!check.result.ok || !check.preloads) {
 			const message = check.result.ok
 				? 'packages.invoke could not preload the package artifact.'

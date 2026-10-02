@@ -1,3 +1,5 @@
+import { assertMcpClientCanUsePackage } from '#worker/mcp-client-access/enforce.ts'
+import { getAmbientMcpClientAccess } from '#worker/mcp-client-access/scope.ts'
 import { getErrorMessage } from '@kody-internal/shared/error-message.ts'
 import {
 	type PackageInvokeCheckResult,
@@ -146,6 +148,17 @@ export async function checkPackageInvokeForRuntimeWithPreloads(input: {
 			}),
 			preloads: null,
 		}
+	}
+	// Per-OAuth-client package gate (self-host fork): checked before any
+	// contract detail so a restricted connection learns nothing about a
+	// package it may not use. Package code invoking its own dependencies is
+	// not gated (allowlists name entry points).
+	if (input.callerKind === 'execute') {
+		assertMcpClientCanUsePackage({
+			policy: getAmbientMcpClientAccess(),
+			packageId: savedPackage.id,
+			packageName: savedPackage.name,
+		})
 	}
 	if (
 		!callerIsPlatformAccount &&
