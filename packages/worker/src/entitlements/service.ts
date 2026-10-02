@@ -1285,6 +1285,25 @@ export type ConsumeDailyEntitlementInput = {
 	email: string | null | undefined
 	resource: EntitlementResource
 	now?: Date
+	/**
+	 * Count usage without enforcing the plan's daily/weekly ceilings or the
+	 * past-include credit stop. Self-hosted deployments opt in per resource
+	 * (see {@link isExecuteCallLimitDisabled}).
+	 */
+	unlimited?: boolean
+}
+
+type ExecuteCallLimitEnv = {
+	EXECUTE_CALL_LIMIT?: string | undefined
+}
+
+/**
+ * `EXECUTE_CALL_LIMIT=off` disables enforcement of `execute_calls_per_day`
+ * (daily and weekly) for private/self-hosted deployments. Calls are still
+ * counted so usage surfaces stay accurate.
+ */
+export function isExecuteCallLimitDisabled(env: ExecuteCallLimitEnv): boolean {
+	return env.EXECUTE_CALL_LIMIT?.trim().toLowerCase() === 'off'
 }
 
 /**
@@ -1308,7 +1327,7 @@ export async function consumeDailyEntitlement(
 		email: input.email,
 	})
 	// Before the counter so a stopped attempt does not spend daily quota.
-	if (isPastIncludeStopResource(resource)) {
+	if (!input.unlimited && isPastIncludeStopResource(resource)) {
 		await assertWithinPastIncludeCredits({
 			db: input.db,
 			userId: input.userId,
@@ -1317,20 +1336,23 @@ export async function consumeDailyEntitlement(
 		})
 	}
 	const plan = entitlement.plan
-	const limit = resolvePlanLimit(
-		plan,
-		resource,
-		entitlement.ladder,
-		entitlement.creditWallet,
-	)
-	const weekLimit = isWeeklyComputeWindowResource(resource)
-		? resolveWeeklyPlanLimit(
+	const limit = input.unlimited
+		? Number.MAX_SAFE_INTEGER
+		: resolvePlanLimit(
 				plan,
 				resource,
 				entitlement.ladder,
 				entitlement.creditWallet,
 			)
-		: null
+	const weekLimit =
+		!input.unlimited && isWeeklyComputeWindowResource(resource)
+			? resolveWeeklyPlanLimit(
+					plan,
+					resource,
+					entitlement.ladder,
+					entitlement.creditWallet,
+				)
+			: null
 	const weekStart = weekLimit === null ? undefined : utcWeekStart(now)
 	const meter = userMeterRpc({ env: input.env, userId: input.userId })
 	const consumeInput = {

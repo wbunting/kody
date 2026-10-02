@@ -215,6 +215,16 @@ URLs and headers where the MCP runtime supports them. Host allowlists and
 capability policies apply per secret. There are no GitHub-specific Worker
 environment variables.
 
+## Execute call limit
+
+Optional Worker var:
+
+- `EXECUTE_CALL_LIMIT` — set to the exact value `off` on a private or
+  self-hosted deployment to stop enforcing the plan's `execute_calls_per_day`
+  ceilings (daily and weekly) and the past-include credit stop for MCP
+  `execute`. Calls are still counted, so usage pages stay accurate. Leave unset
+  on hosted Kody.
+
 ## Social login (GitHub / Google / X / Discord)
 
 Optional Worker secrets (see `packages/worker/src/app/oauth-providers.ts` and
