@@ -400,6 +400,7 @@ async function attachCloudflareMock(
 			'127.0.0.1',
 			'--var',
 			`MOCK_API_TOKEN:${apiToken}`,
+			...buildSelfhostGitVars(),
 		],
 		{},
 		{
@@ -424,6 +425,24 @@ async function attachCloudflareMock(
 		)
 	}
 	console.log(dim(`Cloudflare mock base URL ${baseUrl}`))
+}
+
+/**
+ * Self-hosted git backend (tools/selfhost-git-server.ts). When
+ * KODY_GIT_BACKEND_URL is set, the Cloudflare API stand-in stores Artifacts
+ * repos as real git repos served over smart HTTP.
+ */
+function buildSelfhostGitVars() {
+	const vars: Array<string> = []
+	for (const key of [
+		'KODY_GIT_BACKEND_URL',
+		'KODY_GIT_INTERNAL_TOKEN',
+		'KODY_GIT_PUBLIC_URL',
+	]) {
+		const value = process.env[key]?.trim()
+		if (value) vars.push('--var', `${key}:${value}`)
+	}
+	return vars
 }
 
 async function ensureMockServers() {

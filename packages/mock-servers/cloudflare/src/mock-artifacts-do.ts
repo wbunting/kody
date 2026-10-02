@@ -69,7 +69,15 @@ type MockArtifactsReadSnapshotPayload = {
 	commit: string | null
 }
 
+type MockArtifactsTouchPushPayload = {
+	repo: string
+}
+
 type MockArtifactsCommand =
+	| {
+			type: 'touchPush'
+			payload: MockArtifactsTouchPushPayload
+	  }
 	| {
 			type: 'list'
 			payload: MockArtifactsListPayload
@@ -238,6 +246,17 @@ export class MockCloudflareArtifactsDurableObject {
 					published_commit: publishedCommit,
 				})
 			}
+			case 'touchPush': {
+				const repo = storage.repos[command.payload.repo]
+				if (!repo) {
+					return Response.json({ error: 'repo_not_found' })
+				}
+				const now = new Date().toISOString()
+				repo.last_push_at = now
+				repo.updated_at = now
+				await this.writeStorage(storage)
+				return Response.json({ ok: true })
+			}
 			case 'readSnapshot': {
 				const repo = storage.repos[command.payload.repo]
 				if (!repo) {
@@ -377,6 +396,13 @@ class MockCloudflareArtifactsState {
 			)
 		}
 		return response.published_commit
+	}
+
+	async touchRepoPush(repo: string) {
+		await this.callState<{ ok?: boolean; error?: string }>({
+			type: 'touchPush',
+			payload: { repo },
+		})
 	}
 
 	async readSnapshot(input: MockArtifactsReadSnapshotPayload) {

@@ -14,6 +14,14 @@ import { createMockCloudflareEmailState } from './mock-email-messages-do.ts'
 
 type MockCloudflareEnv = {
 	MOCK_API_TOKEN?: string
+	/**
+	 * Self-hosted git backend (tools/selfhost-git-server.ts). When set, repo
+	 * storage, tokens, forks, and source snapshots are real git commits served
+	 * over smart HTTP instead of in-memory mock state.
+	 */
+	KODY_GIT_BACKEND_URL?: string
+	KODY_GIT_INTERNAL_TOKEN?: string
+	KODY_GIT_PUBLIC_URL?: string
 	MOCK_CLOUDFLARE_ARTIFACTS_STATE: DurableObjectNamespace
 	MOCK_CLOUDFLARE_EMAIL_STATE: DurableObjectNamespace
 }
@@ -286,6 +294,111 @@ function buildMockArtifactsRemote(input: {
 		input.requestUrl,
 	)
 	return remote.toString()
+}
+
+type GitBackend = { baseUrl: string; token: string; publicUrl: string }
+
+function readGitBackend(env: MockCloudflareEnv): GitBackend | null {
+	const baseUrl = env.KODY_GIT_BACKEND_URL?.trim().replace(/\/$/, '')
+	const token = (env.KODY_GIT_INTERNAL_TOKEN ?? env.MOCK_API_TOKEN)?.trim()
+	if (!baseUrl || !token) return null
+	return {
+		baseUrl,
+		token,
+		publicUrl: env.KODY_GIT_PUBLIC_URL?.trim().replace(/\/$/, '') || baseUrl,
+	}
+}
+
+class GitBackendError extends Error {
+	status: number
+	constructor(status: number, message: string) {
+		super(message)
+		this.status = status
+	}
+}
+
+async function callGitBackend<T>(
+	backend: GitBackend,
+	input: {
+		method: 'GET' | 'POST'
+		path: string
+		query?: Record<string, string>
+		body?: unknown
+	},
+): Promise<T> {
+	const url = new URL(`${backend.baseUrl}/__internal${input.path}`)
+	for (const [key, value] of Object.entries(input.query ?? {})) {
+		url.searchParams.set(key, value)
+	}
+	const response = await fetch(url, {
+		method: input.method,
+		headers: {
+			authorization: `Bearer ${backend.token}`,
+			...(input.body ? { 'content-type': 'application/json' } : {}),
+		},
+		body: input.body ? JSON.stringify(input.body) : undefined,
+	})
+	const text = await response.text()
+	if (!response.ok) {
+		throw new GitBackendError(
+			response.status,
+			`git backend ${input.path} failed (${response.status}): ${text}`,
+		)
+	}
+	return JSON.parse(text) as T
+}
+
+function buildGitBackendRemote(
+	backend: GitBackend,
+	namespace: string,
+	repoName: string,
+) {
+	return `${backend.publicUrl}/git/${encodeURIComponent(namespace)}/${encodeURIComponent(repoName)}.git`
+}
+
+function withGitBackendRemote<T extends { name: string; remote: string }>(
+	env: MockCloudflareEnv,
+	namespace: string,
+	repo: T,
+): T {
+	const backend = readGitBackend(env)
+	if (!backend) return repo
+	return {
+		...repo,
+		remote: buildGitBackendRemote(backend, namespace, repo.name),
+	}
+}
+
+type GitBackendToken = {
+	id: string
+	plaintext: string
+	scope: string
+	expires_at: string
+}
+
+async function mintRepoToken(
+	env: MockCloudflareEnv,
+	state: ReturnType<typeof getMockArtifactsState>,
+	input: { namespace: string; repo: string; scope: string; ttl: number },
+): Promise<GitBackendToken> {
+	const backend = readGitBackend(env)
+	if (!backend) {
+		return state.createToken({
+			repo: input.repo,
+			scope: input.scope,
+			ttl: input.ttl,
+		})
+	}
+	return callGitBackend<GitBackendToken>(backend, {
+		method: 'POST',
+		path: '/tokens',
+		body: {
+			namespace: input.namespace,
+			name: input.repo,
+			scope: input.scope === 'read' ? 'read' : 'write',
+			ttl: input.ttl,
+		},
+	})
 }
 
 async function readJsonBody(request: Request) {
@@ -615,7 +728,9 @@ async function handleArtifactsRepos(
 		const cursor = input.url.searchParams.get('cursor')?.trim() || null
 		const result = await state.listRepos(limit, cursor)
 		return envelope(
-			result.repos,
+			result.repos.map((repo) =>
+				withGitBackendRemote(env, input.namespace, repo),
+			),
 			{ status: 200 },
 			{
 				count: result.repos.length,
@@ -636,6 +751,18 @@ async function handleArtifactsRepos(
 	if (existing) {
 		return errorEnvelope(409, 1003, 'repo already exists')
 	}
+	const gitBackend = readGitBackend(env)
+	const defaultBranch =
+		typeof body.default_branch === 'string' && body.default_branch.trim()
+			? body.default_branch.trim()
+			: 'main'
+	if (gitBackend) {
+		await callGitBackend(gitBackend, {
+			method: 'POST',
+			path: '/repos',
+			body: { namespace: input.namespace, name: repoName, defaultBranch },
+		})
+	}
 	const repo = await state.createRepo({
 		name: repoName,
 		description: typeof body.description === 'string' ? body.description : null,
@@ -644,14 +771,17 @@ async function handleArtifactsRepos(
 				? body.default_branch.trim()
 				: 'main',
 		readOnly: body.read_only === true,
-		remote: buildMockArtifactsRemote({
-			requestUrl: input.url,
-			accountId: input.accountId,
-			namespace: input.namespace,
-			repoName,
-		}),
+		remote: gitBackend
+			? buildGitBackendRemote(gitBackend, input.namespace, repoName)
+			: buildMockArtifactsRemote({
+					requestUrl: input.url,
+					accountId: input.accountId,
+					namespace: input.namespace,
+					repoName,
+				}),
 	})
-	const token = await state.createToken({
+	const token = await mintRepoToken(env, state, {
+		namespace: input.namespace,
 		repo: repo.name,
 		scope: 'write',
 		ttl: 3600,
@@ -690,7 +820,9 @@ async function handleArtifactsRepoInfo(
 	if (!repo) {
 		return errorEnvelope(404, 1002, 'repo not found')
 	}
-	return envelope(repo, { status: 200 })
+	return envelope(withGitBackendRemote(env, input.namespace, repo), {
+		status: 200,
+	})
 }
 
 async function handleArtifactsTokens(
@@ -722,7 +854,8 @@ async function handleArtifactsTokens(
 	if (!repo) {
 		return errorEnvelope(404, 1002, 'repo not found')
 	}
-	const token = await state.createToken({
+	const token = await mintRepoToken(env, state, {
+		namespace: input.namespace,
 		repo: repo.name,
 		scope: typeof body.scope === 'string' ? body.scope : 'write',
 		ttl:
@@ -768,18 +901,33 @@ async function handleArtifactsFork(
 	if (existingTarget) {
 		return errorEnvelope(409, 1003, 'repo already exists')
 	}
+	const gitBackend = readGitBackend(env)
+	if (gitBackend) {
+		await callGitBackend(gitBackend, {
+			method: 'POST',
+			path: '/repos/fork',
+			body: {
+				namespace: input.namespace,
+				source: source.name,
+				target: targetName,
+			},
+		})
+	}
 	const forked = await state.forkRepo({
 		sourceName: source.name,
 		targetName,
 		readOnly: body.read_only === true,
-		remote: buildMockArtifactsRemote({
-			requestUrl: input.url,
-			accountId: input.accountId,
-			namespace: input.namespace,
-			repoName: targetName,
-		}),
+		remote: gitBackend
+			? buildGitBackendRemote(gitBackend, input.namespace, targetName)
+			: buildMockArtifactsRemote({
+					requestUrl: input.url,
+					accountId: input.accountId,
+					namespace: input.namespace,
+					repoName: targetName,
+				}),
 	})
-	const token = await state.createToken({
+	const token = await mintRepoToken(env, state, {
+		namespace: input.namespace,
 		repo: forked.name,
 		scope: 'write',
 		ttl: 3600,
@@ -816,6 +964,68 @@ async function handleArtifactsMockSourceSnapshot(
 		accountId: input.accountId,
 		namespace: input.namespace,
 	})
+	const gitBackend = readGitBackend(env)
+	if (gitBackend) {
+		const repo = await state.getRepo(input.repoName)
+		if (!repo) {
+			return errorEnvelope(404, 1002, 'repo not found')
+		}
+		if (request.method === 'GET') {
+			try {
+				const snapshot = await callGitBackend<{
+					published_commit: string
+					files: Record<string, string>
+				}>(gitBackend, {
+					method: 'GET',
+					path: '/snapshot',
+					query: {
+						namespace: input.namespace,
+						name: input.repoName,
+						...(input.url.searchParams.get('commit')?.trim()
+							? { commit: input.url.searchParams.get('commit')!.trim() }
+							: {}),
+					},
+				})
+				return envelope(snapshot, { status: 200 })
+			} catch (error) {
+				if (error instanceof GitBackendError && error.status === 404) {
+					return errorEnvelope(404, 1002, 'snapshot not found')
+				}
+				throw error
+			}
+		}
+		const body = await readJsonBody(request)
+		if (body === null) {
+			return errorEnvelope(400, 1001, 'invalid JSON body')
+		}
+		const files = Object.fromEntries(
+			(body.files && typeof body.files === 'object'
+				? Object.entries(body.files)
+				: []
+			).filter(
+				(entry): entry is [string, string] =>
+					typeof entry[0] === 'string' && typeof entry[1] === 'string',
+			),
+		)
+		const written = await callGitBackend<{ published_commit: string }>(
+			gitBackend,
+			{
+				method: 'POST',
+				path: '/snapshot',
+				body: {
+					namespace: input.namespace,
+					name: input.repoName,
+					files,
+					message: typeof body.message === 'string' ? body.message : undefined,
+				},
+			},
+		)
+		await state.touchRepoPush(input.repoName)
+		return envelope(
+			{ published_commit: written.published_commit, files },
+			{ status: 200 },
+		)
+	}
 	if (request.method === 'GET') {
 		const snapshot = await state.readSnapshot({
 			repo: input.repoName,
