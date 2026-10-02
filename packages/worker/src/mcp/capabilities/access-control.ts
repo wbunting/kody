@@ -18,12 +18,18 @@ import {
 	recordMcpAuthDenial,
 } from '#mcp/auth-audit.ts'
 import { type BuiltCapabilityRegistry } from './build-capability-registry.ts'
+import {
+	mcpClientAccessDeniedMessage,
+	mcpClientPolicyAllowsDomain,
+} from '@kody-internal/shared/mcp-client-access.ts'
+import { resolveEffectiveMcpClientAccess } from '#worker/mcp-client-access/scope.ts'
 import { type Capability, type CapabilitySpec } from './types.ts'
 
 type CapabilityAccessRequirement = Pick<
 	Capability | CapabilitySpec,
 	'name' | 'requiredRole' | 'requiredPermission' | 'featureFlag'
->
+> &
+	Partial<Pick<Capability | CapabilitySpec, 'domain'>>
 
 export type CallerFeatureFlags = Readonly<Record<FeatureFlagKey, boolean>>
 
@@ -111,11 +117,30 @@ export async function resolveCallerFeatureFlags(
 	}
 }
 
+/**
+ * Per-OAuth-client domain gate (self-host fork). The policy comes from the
+ * caller context or, for nested package runs that rebuild their context, the
+ * ambient scope of the enclosing MCP tool call.
+ */
+function callerClientAllowsCapabilityDomain(
+	callerContext: McpCallerContext,
+	capability: CapabilityAccessRequirement,
+) {
+	if (!capability.domain) return true
+	return mcpClientPolicyAllowsDomain(
+		resolveEffectiveMcpClientAccess(callerContext),
+		capability.domain,
+	)
+}
+
 export function callerCanAccessCapability(
 	callerContext: McpCallerContext,
 	capability: CapabilityAccessRequirement,
 	featureFlags?: CallerFeatureFlags | null,
 ) {
+	if (!callerClientAllowsCapabilityDomain(callerContext, capability)) {
+		return false
+	}
 	const requiredRole = capability.requiredRole
 	const requiredPermission = capability.requiredPermission
 	const requiredFeatureFlag = capability.featureFlag
@@ -157,7 +182,7 @@ export async function assertCallerCanAccessCapability(
 	}
 
 	const user = getUserAccessContext(callerContext)
-	const denial = describeCapabilityDenial(user, capability)
+	const denial = describeCapabilityDenial(user, capability, callerContext)
 	// A denial is the one signal we would have that a principal is walking the
 	// capability surface, so it is recorded even though it is not an error.
 	await recordMcpAuthDenial({
@@ -173,7 +198,19 @@ export async function assertCallerCanAccessCapability(
 function describeCapabilityDenial(
 	user: ReturnType<typeof getUserAccessContext>,
 	capability: CapabilityAccessRequirement,
+	callerContext?: McpCallerContext,
 ): { reason: McpAuthDenialReason; message: string } {
+	if (
+		callerContext &&
+		!callerClientAllowsCapabilityDomain(callerContext, capability)
+	) {
+		return {
+			reason: 'client_policy',
+			message: mcpClientAccessDeniedMessage({
+				what: `capability "${capability.name}" (domain "${capability.domain}")`,
+			}),
+		}
+	}
 	if (!user) {
 		return {
 			reason: 'no_user',

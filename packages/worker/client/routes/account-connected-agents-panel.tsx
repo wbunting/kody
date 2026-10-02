@@ -1,5 +1,12 @@
 import { type Handle, type RemixNode, css } from 'remix/ui'
 import { createDoubleCheck } from '#client/double-check.ts'
+import { on } from '#client/event-mixin.ts'
+import {
+	ConnectionAccessEditor,
+	createAccessDraft,
+	type McpClientAccessDraft,
+	summarizeAccess,
+} from '#client/routes/account-connection-access-editor.tsx'
 import { readJson } from '#client/routes/account-approval-shared.ts'
 import { connectedAgentsApiPath } from '#client/routes/account-page-data.ts'
 import {
@@ -15,6 +22,7 @@ import {
 import {
 	type AccountConnectedAgentListItem,
 	type AccountConnectedAgentsLoaderData,
+	type McpClientAccessOptions,
 } from '#universal/loader-data.ts'
 import { renderIcon } from '#universal/icon.tsx'
 import {
@@ -25,6 +33,7 @@ import {
 } from '#universal/styles/tokens.ts'
 import {
 	getDangerPillCss,
+	getGhostButtonCss,
 	getLogoWellCss,
 	getSwapLabelCss,
 	mergeCss,
@@ -32,6 +41,10 @@ import {
 
 export function createAccountConnectedAgents(handle: Handle) {
 	let agents: Array<AccountConnectedAgentListItem> = []
+	let accessOptions: McpClientAccessOptions | null = null
+	const accessDrafts = new Map<string, McpClientAccessDraft>()
+	const openAccessEditors = new Set<string>()
+	const savingAccess = new Set<string>()
 	const pendingRevokes = new Set<string>()
 	const revokeChecks = new Map<string, ReturnType<typeof createDoubleCheck>>()
 
@@ -50,6 +63,72 @@ export function createAccountConnectedAgents(handle: Handle) {
 
 	function applyPayload(payload: AccountConnectedAgentsLoaderData) {
 		agents = visibleAgents(payload.agents)
+		accessOptions = payload.accessOptions ?? null
+		// Drop drafts for editors that are closed so a reopen starts from the
+		// saved policy rather than a stale edit.
+		for (const clientId of accessDrafts.keys()) {
+			if (!openAccessEditors.has(clientId)) accessDrafts.delete(clientId)
+		}
+	}
+
+	function readAccessDraft(agent: AccountConnectedAgentListItem) {
+		const existing = accessDrafts.get(agent.clientId)
+		if (existing) return existing
+		const created = createAccessDraft(agent.access)
+		accessDrafts.set(agent.clientId, created)
+		return created
+	}
+
+	function toggleAccessEditor(agent: AccountConnectedAgentListItem) {
+		if (openAccessEditors.has(agent.clientId)) {
+			openAccessEditors.delete(agent.clientId)
+			accessDrafts.delete(agent.clientId)
+		} else {
+			openAccessEditors.add(agent.clientId)
+			accessDrafts.set(agent.clientId, createAccessDraft(agent.access))
+		}
+		handle.update()
+	}
+
+	async function submitAccess(
+		clientId: string,
+		body: Record<string, unknown>,
+		successMessage: string,
+	) {
+		savingAccess.add(clientId)
+		handle.update()
+		try {
+			const response = await fetch(connectedAgentsApiPath, {
+				method: 'POST',
+				headers: {
+					Accept: 'application/json',
+					'Content-Type': 'application/json',
+				},
+				credentials: 'include',
+				body: JSON.stringify({ clientId, ...body }),
+			})
+			if (response.status === 401) {
+				window.location.assign('/login')
+				return
+			}
+			const payload = await readJson<
+				AccountConnectedAgentsLoaderData & { error?: string }
+			>(response)
+			if (!response.ok || !payload?.ok) {
+				throw new Error(payload?.error || 'Unable to save access.')
+			}
+			accessDrafts.delete(clientId)
+			openAccessEditors.delete(clientId)
+			applyPayload(payload)
+			toast.success(successMessage)
+		} catch (error) {
+			toast.error(
+				error instanceof Error ? error.message : 'Unable to save access.',
+			)
+		} finally {
+			savingAccess.delete(clientId)
+			handle.update()
+		}
 	}
 
 	async function revokeAgent(clientId: string) {
@@ -235,6 +314,67 @@ export function createAccountConnectedAgents(handle: Handle) {
 																	fallback="at an unknown time"
 																/>
 															</span>
+															<span
+																data-testid="connection-access-summary"
+																mix={css({
+																	color: colors.text,
+																	fontSize: typography.fontSize.sm,
+																})}
+															>
+																Access: {summarizeAccess(agent.access)}{' '}
+																{accessOptions ? (
+																	<button
+																		type="button"
+																		data-testid="toggle-connection-access"
+																		aria-expanded={
+																			openAccessEditors.has(agent.clientId)
+																				? 'true'
+																				: 'false'
+																		}
+																		mix={[
+																			css(getGhostButtonCss({ size: 'sm' })),
+																			on('click', () =>
+																				toggleAccessEditor(agent),
+																			),
+																		]}
+																	>
+																		{openAccessEditors.has(agent.clientId)
+																			? 'Close'
+																			: 'Edit access'}
+																	</button>
+																) : null}
+															</span>
+															{accessOptions &&
+															openAccessEditors.has(agent.clientId) ? (
+																<ConnectionAccessEditor
+																	clientId={agent.clientId}
+																	label={revokeName}
+																	options={accessOptions}
+																	draft={readAccessDraft(agent)}
+																	saving={savingAccess.has(agent.clientId)}
+																	onDraftChange={(draft) => {
+																		accessDrafts.set(agent.clientId, draft)
+																		handle.update()
+																	}}
+																	onSave={() =>
+																		void submitAccess(
+																			agent.clientId,
+																			{
+																				intent: 'set-access',
+																				policy: readAccessDraft(agent),
+																			},
+																			'Access saved.',
+																		)
+																	}
+																	onReset={() =>
+																		void submitAccess(
+																			agent.clientId,
+																			{ intent: 'clear-access' },
+																			'Full access restored.',
+																		)
+																	}
+																/>
+															) : null}
 														</span>
 														<button
 															type="button"

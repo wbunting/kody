@@ -193,6 +193,7 @@ test('connected agents API lists unique inbound clients and revokes every grant 
 			kind: 'cursor',
 			connectedAt: '2023-11-14T22:13:20.000Z',
 			lastUsedAt: '2026-03-20T12:00:00.000Z',
+			access: null,
 		},
 		{
 			clientId: 'https://chatgpt.com/oauth/vG3/client.json',
@@ -201,6 +202,7 @@ test('connected agents API lists unique inbound clients and revokes every grant 
 			kind: 'chatgpt',
 			connectedAt: '2023-11-14T22:16:40.000Z',
 			lastUsedAt: '2026-03-10T12:00:00.000Z',
+			access: null,
 		},
 	])
 

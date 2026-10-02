@@ -9,6 +9,7 @@ import { requireMcpUser } from '#mcp/capabilities/meta/require-user.ts'
 import { getPackageAppBaseUrl } from '#worker/app-base-url.ts'
 import { resolveDisplayName } from '#worker/identity/username.ts'
 import { resolveSavedPackageWithFreshnessCache } from '#worker/package-invocations/invoke-contract-cache.ts'
+import { assertMcpClientCanUsePackage } from '#worker/mcp-client-access/enforce.ts'
 import {
 	normalizePackageNameInput,
 	packageIdLookupDescription,
@@ -432,6 +433,11 @@ export const packageAppFetchCapability = defineDomainCapability(
 				}
 				throw new McpCallerError('Saved package not found for this user.')
 			}
+			assertMcpClientCanUsePackage({
+				policy: ctx.callerContext,
+				packageId: savedPackage.id,
+				packageName: savedPackage.name,
+			})
 			if (!savedPackage.hasApp) {
 				throw new McpCallerError(
 					`Saved package "${savedPackage.kodyId}" has no declared app (package.json#kody.app). Use a static kody:@ import from execute for export smoke tests, or ${packageAppFetchCapabilityName} after declaring kody.app.`,

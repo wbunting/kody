@@ -563,7 +563,7 @@ test('SSR HTML routes render page content and embedded loader data', async () =>
 	expect(connectionsHtml).toContain('data-entity-explainer="connections"')
 	expect(
 		readAppRootProps(connectionsHtml).loaderData?.accountConnectedAgents,
-	).toEqual({
+	).toMatchObject({
 		ok: true,
 		agents: [],
 		mcpServerUrl: '',

@@ -1,4 +1,9 @@
 import { type McpCallerContext } from '@kody-internal/shared/chat.ts'
+import {
+	mcpClientPolicyAllowsIntegration,
+	mcpClientPolicyAllowsPackage,
+	mcpClientPolicyAllowsUserSecret,
+} from '@kody-internal/shared/mcp-client-access.ts'
 import { getCapabilityRegistryForContext } from '#mcp/capabilities/registry.ts'
 import { listUserSecretsForSearch } from '#mcp/secrets/service.ts'
 import { type SecretSearchRow } from '#mcp/secrets/types.ts'
@@ -111,8 +116,13 @@ export async function loadSearchRowsAndRegistry(input: {
 					}),
 					listPlatformPackagesForSearch(input.env.APP_DB),
 				])
-				const ownRecords = savedPackages.filter((pkg) =>
-					input.includeHiddenPackages ? true : !pkg.hidden,
+				// Per-OAuth-client package gate (self-host fork): restricted
+				// connections only discover allowlisted saved packages.
+				const clientAccess = input.callerContext.clientAccess ?? null
+				const ownRecords = savedPackages.filter(
+					(pkg) =>
+						(input.includeHiddenPackages ? true : !pkg.hidden) &&
+						mcpClientPolicyAllowsPackage(clientAccess, pkg.id),
 				)
 				const packageRows = await buildSavedPackageSearchRows({
 					env: input.env,
@@ -142,7 +152,11 @@ export async function loadSearchRowsAndRegistry(input: {
 					env: input.env,
 					baseUrl: input.callerContext.baseUrl,
 					userId,
-					records: sharedRecords.filter((record) => !ownIds.has(record.id)),
+					records: sharedRecords.filter(
+						(record) =>
+							!ownIds.has(record.id) &&
+							mcpClientPolicyAllowsPackage(clientAccess, record.id),
+					),
 					shareGranted: true,
 				})
 				// Platform (built-in) packages are discoverable for everyone;
@@ -160,7 +174,8 @@ export async function loadSearchRowsAndRegistry(input: {
 								records: records.filter(
 									(record) =>
 										!ownNames.has(record.name) &&
-										!ownKodyIds.has(record.kodyId),
+										!ownKodyIds.has(record.kodyId) &&
+										mcpClientPolicyAllowsPackage(clientAccess, record.id),
 								),
 								platformScope,
 							}),
@@ -178,19 +193,32 @@ export async function loadSearchRowsAndRegistry(input: {
 			loadUserSecrets: async () => {
 				const userId = input.userId
 				if (!userId) return []
-				return listUserSecretsForSearch({
+				const secrets = await listUserSecretsForSearch({
 					env: input.env,
 					userId,
 				})
+				const clientAccess = input.callerContext.clientAccess ?? null
+				return secrets.filter(
+					(secret) =>
+						secret.scope !== 'user' ||
+						mcpClientPolicyAllowsUserSecret(clientAccess, secret.name),
+				)
 			},
 			loadUserValues: async () => [],
 			loadUserIntegrations: async () => {
 				const userId = input.userId
 				if (!userId) return []
-				return listJoinedIntegrations({
+				const integrations = await listJoinedIntegrations({
 					env: input.env,
 					userId,
 				})
+				const clientAccess = input.callerContext.clientAccess ?? null
+				return integrations.filter((integration) =>
+					mcpClientPolicyAllowsIntegration(
+						clientAccess,
+						integration.connection.name,
+					),
+				)
 			},
 		}),
 	])

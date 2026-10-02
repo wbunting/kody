@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { utf8ByteLength } from '@kody-internal/shared/backup-restore-safety.ts'
 import { getErrorMessage } from '@kody-internal/shared/error-message.ts'
 import { McpCallerError } from '#mcp/caller-error.ts'
+import { assertMcpClientCanUsePackage } from '#worker/mcp-client-access/enforce.ts'
 import { defineDomainCapability } from '#mcp/capabilities/define-domain-capability.ts'
 import { capabilityDomainNames } from '#mcp/capabilities/domain-metadata.ts'
 import { requireMcpUser } from '#mcp/capabilities/meta/require-user.ts'
@@ -248,6 +249,11 @@ export const packageSubscriptionDispatchCapability = defineDomainCapability(
 				const missingId = args.package_id ?? args.kody_id
 				throw new McpCallerError(`Saved package "${missingId}" was not found.`)
 			}
+			assertMcpClientCanUsePackage({
+				policy: ctx.callerContext,
+				packageId: savedPackage.id,
+				packageName: savedPackage.name,
+			})
 			const loaded = await loadPackageManifestBySourceId({
 				env: ctx.env,
 				baseUrl: ctx.callerContext.baseUrl,

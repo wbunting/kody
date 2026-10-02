@@ -53,6 +53,12 @@ import {
 	resolveIntegrationAccessToken,
 } from '#worker/integrations/credentials.ts'
 import { assertCanUseIntegration } from '#worker/integrations/package-access.ts'
+import { type McpClientAccessPolicy } from '@kody-internal/shared/mcp-client-access.ts'
+import {
+	assertMcpClientCanUseIntegration,
+	assertMcpClientCanUseSecretProvider,
+	assertMcpClientCanUseUserSecret,
+} from '#worker/mcp-client-access/enforce.ts'
 import { getJoinedIntegration } from '#worker/integrations/service.ts'
 import { assertIntegrationHostAllowed } from './execute-modules/integration-host-allowlist.ts'
 import { type StorageContext } from '#mcp/storage.ts'
@@ -79,6 +85,12 @@ type FetchGatewayProps = {
 	 * `collectPackageStorageGrantIds`. Omitted outside bundled runs.
 	 */
 	grantedSecretAuthorityPackageIds?: ReadonlyArray<string>
+	/**
+	 * Per-OAuth-client access policy for the run (self-host fork). The gateway
+	 * is its own entrypoint, so async-local host state does not reach it; the
+	 * policy rides on props instead. Absent means the full grant.
+	 */
+	clientAccess?: McpClientAccessPolicy | null
 	/**
 	 * Per-sandbox outbound fetch deadline. Execute keeps the 60s default
 	 * (30s under the 90s sandbox). Long-lived surfaces such as workflows
@@ -452,6 +464,12 @@ export async function expandSecretPlaceholders(input: {
 				scope: referenced.scope,
 				storageContext,
 			})
+			if (resolved.found && (resolved.scope ?? 'user') === 'user') {
+				assertMcpClientCanUseUserSecret({
+					policy: input.props.clientAccess ?? null,
+					name: referenced.name,
+				})
+			}
 			if (!resolved.found || typeof resolved.value !== 'string') {
 				throw new Error(
 					await createUnresolvedSecretMessage({
@@ -481,6 +499,10 @@ export async function expandSecretPlaceholders(input: {
 			if (!userId) {
 				throw new Error(fetchSecretAuthRequiredMessage)
 			}
+			assertMcpClientCanUseIntegration({
+				policy: input.props.clientAccess ?? null,
+				name,
+			})
 			await assertCanUseIntegration({
 				env: input.env,
 				baseUrl: input.props.baseUrl,
@@ -504,6 +526,10 @@ export async function expandSecretPlaceholders(input: {
 			if (!userId) {
 				throw new Error(fetchSecretAuthRequiredMessage)
 			}
+			assertMcpClientCanUseSecretProvider({
+				policy: input.props.clientAccess ?? null,
+				provider: referenced.provider,
+			})
 			const resolved = await resolveProviderSecretForFetch({
 				env: input.env as Env,
 				baseUrl: input.props.baseUrl,

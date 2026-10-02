@@ -94,6 +94,18 @@ import {
 	getMcpServerStatus,
 } from '#worker/mcp-client/status.ts'
 import { mcpServerKodyName } from '#worker/mcp-client/mcp-domain-id.ts'
+import {
+	mcpClientAccessDeniedMessage,
+	mcpClientPolicyIsRestrictive,
+} from '@kody-internal/shared/mcp-client-access.ts'
+import {
+	assertMcpClientCanUsePackage,
+	McpClientAccessDeniedError,
+} from '#worker/mcp-client-access/enforce.ts'
+import {
+	resolveEffectiveMcpClientAccess,
+	runWithMcpClientAccess,
+} from '#worker/mcp-client-access/scope.ts'
 import { listVisibleEnabledMcpServerRefsCached } from '#worker/mcp-client/settings-service.ts'
 import {
 	reportExecutePhaseProgress,
@@ -255,6 +267,18 @@ export function createWorkflowTools(input: {
 			const userId = input.callerContext.user?.userId
 			if (!userId) {
 				throw new Error('workflows.create requires an authenticated user.')
+			}
+			// Inline workflows run later outside this request, where the
+			// per-client policy no longer applies. Restricted connections
+			// cannot create them (self-host fork).
+			if (
+				mcpClientPolicyIsRestrictive(
+					resolveEffectiveMcpClientAccess(input.callerContext),
+				)
+			) {
+				throw new McpClientAccessDeniedError(
+					mcpClientAccessDeniedMessage({ what: 'workflows.create' }),
+				)
 			}
 			return await createDynamicCallableWorkflow({
 				env: input.env,
@@ -600,6 +624,18 @@ export async function runModuleWithRegistry(
 		name: 'bundle',
 		durationMs: Date.now() - bundleStartedAtMs,
 	})
+	// Per-OAuth-client package gate (self-host fork): ad hoc execute may only
+	// import allowlisted saved packages directly. Package-context runs (saved
+	// package code) are gated where they were invoked, not here.
+	if (!options?.packageContext) {
+		for (const dependency of bundled.dependencies ?? []) {
+			assertMcpClientCanUsePackage({
+				policy: callerContext,
+				packageId: dependency.packageId,
+				packageName: dependency.packageName ?? dependency.kodyId,
+			})
+		}
+	}
 	const conversationId = options?.conversationId?.trim()
 	if (conversationId && userId) {
 		const packageIds = bundled.dependencies
@@ -688,7 +724,28 @@ export function collectPackageStorageGrantIds(input: {
 	return grantedPackageIds
 }
 
+type RunBundledModuleWithRegistryArgs = Parameters<
+	typeof runBundledModuleWithRegistryInScope
+>
+
+/**
+ * Run one bundled module. The per-OAuth-client access policy (self-host fork)
+ * is pinned as ambient host state for the whole run so nested package runs,
+ * capability handlers, and secret resolution that rebuild their own caller
+ * context still enforce it. Nested package runs inherit the ambient policy;
+ * an explicit caller-context policy wins.
+ */
 export async function runBundledModuleWithRegistry(
+	...args: RunBundledModuleWithRegistryArgs
+): ReturnType<typeof runBundledModuleWithRegistryInScope> {
+	const [, callerContext] = args
+	const policy = resolveEffectiveMcpClientAccess(callerContext)
+	return await runWithMcpClientAccess(policy, () =>
+		runBundledModuleWithRegistryInScope(...args),
+	)
+}
+
+async function runBundledModuleWithRegistryInScope(
 	env: Env,
 	callerContext: McpCallerContext,
 	bundle: {
@@ -935,6 +992,7 @@ export async function runBundledModuleWithRegistry(
 				email: callerContext.user?.email ?? null,
 				storageContext: normalizedStorageContext,
 				grantedSecretAuthorityPackageIds: [...authorizedPackageStorageIds],
+				clientAccess: resolveEffectiveMcpClientAccess(callerContext),
 			},
 			modules: hydratedModules,
 			// Package-context runs are saved-package code; do not count their fetch hosts.

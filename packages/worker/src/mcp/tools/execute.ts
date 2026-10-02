@@ -30,6 +30,7 @@ import {
 import { getCapabilityRegistryForContext } from '#mcp/capabilities/registry.ts'
 import { runModuleWithRegistry } from '#mcp/run-kody-registry.ts'
 import { type McpRegistrationAgent } from '#mcp/mcp-registration-agent.ts'
+import { runMcpToolWithClientAccess } from '#worker/mcp-client-access/service.ts'
 import { createProgressReporter, type McpToolCallExtra } from '#mcp/progress.ts'
 import {
 	callerContextFields,
@@ -170,14 +171,16 @@ export const executeToolOutputSchema = {
 const executeCodeFieldDescription =
 	'Single ESM module string with imports/exports and a default export to execute. Imports may be arbitrary npm packages compatible with the Cloudflare Workers runtime; prefer packages over rewriting helpers.'
 
-export async function registerExecuteTool(agent: McpRegistrationAgent) {
-	const icons = buildKodyToolIcons(agent.getCallerContext().baseUrl)
+export async function registerExecuteTool(
+	registrationAgent: McpRegistrationAgent,
+) {
+	const icons = buildKodyToolIcons(registrationAgent.getCallerContext().baseUrl)
 	const featureFlags = await resolveCallerFeatureFlags(
-		agent.getEnv(),
-		agent.getCallerContext(),
+		registrationAgent.getEnv(),
+		registrationAgent.getCallerContext(),
 	)
 	const invokeEnabled = featureFlags[executeInvokeFlagKey] === true
-	agent.server.registerTool(
+	registrationAgent.server.registerTool(
 		executeTool.name,
 		{
 			title: executeTool.title,
@@ -245,339 +248,292 @@ export async function registerExecuteTool(agent: McpRegistrationAgent) {
 				idempotencyKey?: string
 			},
 			toolExtra?: McpToolCallExtra,
-		) => {
-			const timingStart = startToolTiming()
-			const env = agent.getEnv()
-			// Hand terminal run-record writes and nested-invocation
-			// observability to the Durable Object's waitUntil so they stop
-			// serializing the execute response they observe.
-			const waitUntil = agent.waitUntil?.bind(agent)
-			const reportProgress = createProgressReporter(toolExtra)
-			const callerContext = agent.getCallerContext()
-			const resolvedConversationId = resolveConversationId(conversationId)
-			const {
-				baseUrl,
-				hasUser,
-				userId,
-				storageId: boundStorageId,
-			} = callerContextFields(callerContext)
-			const activeStorageId = boundStorageId ?? null
-			const mcpCallerFields = {
-				baseUrl,
-				hasUser,
-				userId,
-				conversationId: resolvedConversationId,
-				...(activeStorageId ? { storageId: activeStorageId } : {}),
-			}
-			let claimedRunHandle: RunRecordHandle | null = null
-			try {
-				return await runExecuteTool()
-			} catch (cause) {
-				// Setup failures (registry build, module bundling, executor
-				// creation) must return a structured MCP error instead of an
-				// unhandled rejection, mirroring the search tool boundary.
-				// Finalize any pre-claimed keyed run so retries can replay the
-				// error instead of seeing a stuck `running` row.
-				// Nested-function assignments are invisible to TS control-flow
-				// analysis on the outer `let`, so reassert the declared type.
-				const claimedHandle = claimedRunHandle as RunRecordHandle | null
-				// Setup failures happen before sandbox work: release the key so
-				// a later retry is not poisoned by a non-sandbox error.
-				if (claimedHandle) {
-					await abandonRunRecord({ env, handle: claimedHandle })
-				}
-				const timing = finishToolTiming(timingStart)
-				const error = cause instanceof Error ? cause : new Error(String(cause))
-				const { errorName, errorMessage } = errorFields(error)
-				const errorDetails = getExecutionErrorDetails(error)
-				logMcpEvent({
-					category: 'mcp',
-					tool: 'execute',
-					toolName: 'execute',
-					outcome: 'failure',
-					durationMs: timing.durationMs,
-					...mcpCallerFields,
-					sandboxError: false,
-					errorName,
-					errorMessage,
-					cause: error,
-				})
-				return {
-					content: prependToolMetadataContent(resolvedConversationId, [
-						{ type: 'text', text: `Error: ${error.message}` },
-					]),
-					structuredContent: {
-						conversationId: resolvedConversationId,
-						timing,
-						error: error.message,
-						...(errorDetails ? { errorDetails } : {}),
-						...entitlementStructuredContent(error),
-					},
-					isError: true,
-				}
-			}
-
-			async function runExecuteTool() {
-				const normalizedIdempotencyKey =
-					normalizeExecuteIdempotencyKey(idempotencyKey)
-				// Look up an existing keyed execute run before consuming quota
-				// so transport-timeout retries can replay / report in-progress
-				// without burning another daily slot.
-				if (normalizedIdempotencyKey && callerContext.user?.userId) {
-					const existing = await getRunRecordByIdempotencyKey({
-						env,
-						userId: callerContext.user.userId,
-						idempotencyKey: normalizedIdempotencyKey,
-						surface: 'execute',
-					})
-					if (existing) {
-						const timing = finishToolTiming(timingStart)
-						return buildKeyedExecuteLookupResponse({
-							run: existing,
-							conversationId: resolvedConversationId,
-							timing,
-						})
-					}
-				}
-
-				// Schema omit/advertise is decided at register. Re-read the
-				// flag here so a kill-switch applies on the next call even
-				// when a legacy session still has invoke in its tool list.
-				const liveFlags = await resolveCallerFeatureFlags(env, callerContext)
-				const resolvedCode = resolveExecuteModuleSource({
-					code,
-					invoke,
-					invokeEnabled: liveFlags[executeInvokeFlagKey] === true,
-				})
-
-				// Daily execute quota, consumed before claim/bundling/sandbox
-				// so over-limit calls cost nothing and do not poison a key.
-				if (callerContext.user?.userId) {
-					await consumeDailyEntitlement({
-						db: env.APP_DB,
-						env,
-						userId: callerContext.user.userId,
-						email: callerContext.user.email,
-						resource: 'execute_calls_per_day',
-					})
-				}
-
-				if (normalizedIdempotencyKey && callerContext.user?.userId) {
-					const claim = await claimRunRecord({
-						env,
-						userId: callerContext.user.userId,
-						context: {
-							surface: 'execute',
-							name: null,
-							storageId: activeStorageId,
-							idempotencyKey: normalizedIdempotencyKey,
-							metadata: {
-								conversationId: resolvedConversationId,
-							},
-						},
-					})
-					if (!claim) {
-						throw new Error(
-							'Unable to claim execute idempotency key; RUN_LOG is unavailable.',
-						)
-					}
-					if (!claim.claimed) {
-						const timing = finishToolTiming(timingStart)
-						return buildKeyedExecuteLookupResponse({
-							run: claim.run,
-							conversationId: resolvedConversationId,
-							timing,
-						})
-					}
-					claimedRunHandle = claim.handle
-				}
-
-				const [registry, surfacedMemories] = await Promise.all([
-					getCapabilityRegistryForContext({
-						env,
-						callerContext,
-					}),
-					surfaceToolMemories({
-						env,
-						callerContext,
-						conversationId: resolvedConversationId,
-						retrievalQuery: buildMemoryRetrievalQuery(memoryContext),
-					}),
-				])
-				const registeredCapabilityCount = Object.keys(
-					registry.capabilityHandlers,
-				).length
-				const rawFetchHosts = createRawFetchHostSink()
-				const result = await Sentry.startSpan(
-					{
-						name: 'mcp.tool.execute',
-						op: 'mcp.tool',
-						attributes: {
-							'mcp.tool': 'execute',
-						},
-					},
-					async () => {
-						const packageInvokeTools = callerContext.user?.userId
-							? await createExecutePackageInvokeTools({
-									env,
-									baseUrl: callerContext.baseUrl,
-									callerContext,
-									conversationId: resolvedConversationId,
-									waitUntil,
-								})
-							: undefined
-						try {
-							return await runModuleWithRegistry(
-								env,
-								callerContext,
-								resolvedCode,
-								params,
-								{
-									executorExports: agent.getLoopbackExports(),
-									capabilityRegistry: registry,
-									packageInvokeTools,
-									rawFetchHostSink: rawFetchHosts.sink,
-									conversationId: resolvedConversationId,
-									runRecordHandle: claimedRunHandle,
-									waitUntil,
-									reportProgress: reportProgress ?? undefined,
-									runRecord: {
-										surface: 'execute',
-										name: null,
-										storageId: activeStorageId,
-										idempotencyKey: normalizedIdempotencyKey,
-										metadata: {
-											conversationId: resolvedConversationId,
-										},
-									},
-								},
-							)
-						} catch (cause) {
-							// Bundling the caller-provided module (syntax errors,
-							// unresolved imports) throws before the sandbox runs;
-							// route it through the sandbox-error result path so it
-							// is not logged as a platform failure. Finish a still-
-							// running claimed row only — if the registry already
-							// wrote a terminal row, do not double-finish.
-							if (claimedRunHandle) {
-								const current = await getRunRecord({
-									env,
-									userId: claimedRunHandle.userId,
-									runId: claimedRunHandle.id,
-								})
-								if (current?.run.status === 'running') {
-									await finishRunRecord({
-										env,
-										handle: claimedRunHandle,
-										status: 'error',
-										error: cause,
-									})
-								}
-							}
-							return {
-								result: undefined,
-								error: getErrorMessage(cause),
-								logs: [],
-								...(claimedRunHandle ? { runId: claimedRunHandle.id } : {}),
-							}
-						}
-					},
-				)
-				const timing = {
-					...finishToolTiming(timingStart),
-					...(result.serverTiming && result.serverTiming.length > 0
-						? { serverTiming: result.serverTiming }
-						: {}),
-				}
-				const durationMs = timing.durationMs
-				const rawFetchHostNudges = await resolveRawFetchHostNudges({
-					agent,
-					env,
-					callerContext,
+		) =>
+			// Per-OAuth-client policy (self-host fork): refresh it for this call,
+			// scope the caller context, and pin it for nested host work.
+			runMcpToolWithClientAccess(registrationAgent, async (agent) => {
+				const timingStart = startToolTiming()
+				const env = agent.getEnv()
+				// Hand terminal run-record writes and nested-invocation
+				// observability to the Durable Object's waitUntil so they stop
+				// serializing the execute response they observe.
+				const waitUntil = agent.waitUntil?.bind(agent)
+				const reportProgress = createProgressReporter(toolExtra)
+				const callerContext = agent.getCallerContext()
+				const resolvedConversationId = resolveConversationId(conversationId)
+				const {
+					baseUrl,
+					hasUser,
+					userId,
+					storageId: boundStorageId,
+				} = callerContextFields(callerContext)
+				const activeStorageId = boundStorageId ?? null
+				const mcpCallerFields = {
+					baseUrl,
+					hasUser,
+					userId,
 					conversationId: resolvedConversationId,
-					hostCounts: rawFetchHosts.hostCounts(),
-					usedIntegrationAuthHelpers:
-						codeUsesIntegrationAuthHelpers(resolvedCode),
-				})
-				const runId =
-					typeof result.runId === 'string'
-						? result.runId
-						: (claimedRunHandle?.id ?? undefined)
-
-				if (result.error) {
-					const errorDetails = getExecutionErrorDetails(result.error)
-					const { errorName, errorMessage } = errorFields(result.error)
+					...(activeStorageId ? { storageId: activeStorageId } : {}),
+				}
+				let claimedRunHandle: RunRecordHandle | null = null
+				try {
+					return await runExecuteTool()
+				} catch (cause) {
+					// Setup failures (registry build, module bundling, executor
+					// creation) must return a structured MCP error instead of an
+					// unhandled rejection, mirroring the search tool boundary.
+					// Finalize any pre-claimed keyed run so retries can replay the
+					// error instead of seeing a stuck `running` row.
+					// Nested-function assignments are invisible to TS control-flow
+					// analysis on the outer `let`, so reassert the declared type.
+					const claimedHandle = claimedRunHandle as RunRecordHandle | null
+					// Setup failures happen before sandbox work: release the key so
+					// a later retry is not poisoned by a non-sandbox error.
+					if (claimedHandle) {
+						await abandonRunRecord({ env, handle: claimedHandle })
+					}
+					const timing = finishToolTiming(timingStart)
+					const error =
+						cause instanceof Error ? cause : new Error(String(cause))
+					const { errorName, errorMessage } = errorFields(error)
+					const errorDetails = getExecutionErrorDetails(error)
 					logMcpEvent({
 						category: 'mcp',
 						tool: 'execute',
 						toolName: 'execute',
 						outcome: 'failure',
-						durationMs,
+						durationMs: timing.durationMs,
 						...mcpCallerFields,
-						registeredCapabilityCount,
-						sandboxError: true,
+						sandboxError: false,
 						errorName,
 						errorMessage,
-						cause: result.error,
+						cause: error,
 					})
 					return {
 						content: prependToolMetadataContent(resolvedConversationId, [
-							{
-								type: 'text',
-								text: formatExecutionOutput(result),
-							},
-							...formatRawFetchHostNudgeContent(rawFetchHostNudges),
-							...formatSurfacedMemoriesMarkdown(surfacedMemories),
+							{ type: 'text', text: `Error: ${error.message}` },
 						]),
 						structuredContent: {
 							conversationId: resolvedConversationId,
 							timing,
-							...(runId ? { runId } : {}),
-							returnedBytes: 0,
-							error: errorMessage,
-							errorDetails,
-							...entitlementStructuredContent(result.error),
-							logs: result.logs ?? [],
-							...(rawFetchHostNudges.length > 0
-								? { warnings: rawFetchHostNudges }
-								: {}),
-							...buildMemoryStructuredContent(surfacedMemories),
+							error: error.message,
+							...(errorDetails ? { errorDetails } : {}),
+							...entitlementStructuredContent(error),
 						},
 						isError: true,
 					}
 				}
 
-				logMcpEvent({
-					category: 'mcp',
-					tool: 'execute',
-					toolName: 'execute',
-					outcome: 'success',
-					durationMs,
-					...mcpCallerFields,
-					registeredCapabilityCount,
-					sandboxError: false,
-					context: activeStorageId ? { storageId: activeStorageId } : undefined,
-				})
-				const responseLimitBytes =
-					responseLimit ?? defaultExecutionResponseLimitBytes
-				const passthrough = extractMcpPassthrough(result.result)
-				const rawContent = passthrough?.content ?? null
-
-				if (rawContent) {
-					let validatedContent: Array<ContentBlock>
-					try {
-						validatedContent = validateDownstreamMcpContentBlocks(rawContent, {
-							kind: 'execute',
-							label: 'default export (__mcpContent)',
+				async function runExecuteTool() {
+					const normalizedIdempotencyKey =
+						normalizeExecuteIdempotencyKey(idempotencyKey)
+					// Look up an existing keyed execute run before consuming quota
+					// so transport-timeout retries can replay / report in-progress
+					// without burning another daily slot.
+					if (normalizedIdempotencyKey && callerContext.user?.userId) {
+						const existing = await getRunRecordByIdempotencyKey({
+							env,
+							userId: callerContext.user.userId,
+							idempotencyKey: normalizedIdempotencyKey,
+							surface: 'execute',
 						})
-					} catch (error) {
-						const message = getErrorMessage(error)
+						if (existing) {
+							const timing = finishToolTiming(timingStart)
+							return buildKeyedExecuteLookupResponse({
+								run: existing,
+								conversationId: resolvedConversationId,
+								timing,
+							})
+						}
+					}
+
+					// Schema omit/advertise is decided at register. Re-read the
+					// flag here so a kill-switch applies on the next call even
+					// when a legacy session still has invoke in its tool list.
+					const liveFlags = await resolveCallerFeatureFlags(env, callerContext)
+					const resolvedCode = resolveExecuteModuleSource({
+						code,
+						invoke,
+						invokeEnabled: liveFlags[executeInvokeFlagKey] === true,
+					})
+
+					// Daily execute quota, consumed before claim/bundling/sandbox
+					// so over-limit calls cost nothing and do not poison a key.
+					if (callerContext.user?.userId) {
+						await consumeDailyEntitlement({
+							db: env.APP_DB,
+							env,
+							userId: callerContext.user.userId,
+							email: callerContext.user.email,
+							resource: 'execute_calls_per_day',
+						})
+					}
+
+					if (normalizedIdempotencyKey && callerContext.user?.userId) {
+						const claim = await claimRunRecord({
+							env,
+							userId: callerContext.user.userId,
+							context: {
+								surface: 'execute',
+								name: null,
+								storageId: activeStorageId,
+								idempotencyKey: normalizedIdempotencyKey,
+								metadata: {
+									conversationId: resolvedConversationId,
+								},
+							},
+						})
+						if (!claim) {
+							throw new Error(
+								'Unable to claim execute idempotency key; RUN_LOG is unavailable.',
+							)
+						}
+						if (!claim.claimed) {
+							const timing = finishToolTiming(timingStart)
+							return buildKeyedExecuteLookupResponse({
+								run: claim.run,
+								conversationId: resolvedConversationId,
+								timing,
+							})
+						}
+						claimedRunHandle = claim.handle
+					}
+
+					const [registry, surfacedMemories] = await Promise.all([
+						getCapabilityRegistryForContext({
+							env,
+							callerContext,
+						}),
+						surfaceToolMemories({
+							env,
+							callerContext,
+							conversationId: resolvedConversationId,
+							retrievalQuery: buildMemoryRetrievalQuery(memoryContext),
+						}),
+					])
+					const registeredCapabilityCount = Object.keys(
+						registry.capabilityHandlers,
+					).length
+					const rawFetchHosts = createRawFetchHostSink()
+					const result = await Sentry.startSpan(
+						{
+							name: 'mcp.tool.execute',
+							op: 'mcp.tool',
+							attributes: {
+								'mcp.tool': 'execute',
+							},
+						},
+						async () => {
+							const packageInvokeTools = callerContext.user?.userId
+								? await createExecutePackageInvokeTools({
+										env,
+										baseUrl: callerContext.baseUrl,
+										callerContext,
+										conversationId: resolvedConversationId,
+										waitUntil,
+									})
+								: undefined
+							try {
+								return await runModuleWithRegistry(
+									env,
+									callerContext,
+									resolvedCode,
+									params,
+									{
+										executorExports: agent.getLoopbackExports(),
+										capabilityRegistry: registry,
+										packageInvokeTools,
+										rawFetchHostSink: rawFetchHosts.sink,
+										conversationId: resolvedConversationId,
+										runRecordHandle: claimedRunHandle,
+										waitUntil,
+										reportProgress: reportProgress ?? undefined,
+										runRecord: {
+											surface: 'execute',
+											name: null,
+											storageId: activeStorageId,
+											idempotencyKey: normalizedIdempotencyKey,
+											metadata: {
+												conversationId: resolvedConversationId,
+											},
+										},
+									},
+								)
+							} catch (cause) {
+								// Bundling the caller-provided module (syntax errors,
+								// unresolved imports) throws before the sandbox runs;
+								// route it through the sandbox-error result path so it
+								// is not logged as a platform failure. Finish a still-
+								// running claimed row only — if the registry already
+								// wrote a terminal row, do not double-finish.
+								if (claimedRunHandle) {
+									const current = await getRunRecord({
+										env,
+										userId: claimedRunHandle.userId,
+										runId: claimedRunHandle.id,
+									})
+									if (current?.run.status === 'running') {
+										await finishRunRecord({
+											env,
+											handle: claimedRunHandle,
+											status: 'error',
+											error: cause,
+										})
+									}
+								}
+								return {
+									result: undefined,
+									error: getErrorMessage(cause),
+									logs: [],
+									...(claimedRunHandle ? { runId: claimedRunHandle.id } : {}),
+								}
+							}
+						},
+					)
+					const timing = {
+						...finishToolTiming(timingStart),
+						...(result.serverTiming && result.serverTiming.length > 0
+							? { serverTiming: result.serverTiming }
+							: {}),
+					}
+					const durationMs = timing.durationMs
+					const rawFetchHostNudges = await resolveRawFetchHostNudges({
+						agent,
+						env,
+						callerContext,
+						conversationId: resolvedConversationId,
+						hostCounts: rawFetchHosts.hostCounts(),
+						usedIntegrationAuthHelpers:
+							codeUsesIntegrationAuthHelpers(resolvedCode),
+					})
+					const runId =
+						typeof result.runId === 'string'
+							? result.runId
+							: (claimedRunHandle?.id ?? undefined)
+
+					if (result.error) {
+						const errorDetails = getExecutionErrorDetails(result.error)
+						const { errorName, errorMessage } = errorFields(result.error)
+						logMcpEvent({
+							category: 'mcp',
+							tool: 'execute',
+							toolName: 'execute',
+							outcome: 'failure',
+							durationMs,
+							...mcpCallerFields,
+							registeredCapabilityCount,
+							sandboxError: true,
+							errorName,
+							errorMessage,
+							cause: result.error,
+						})
 						return {
 							content: prependToolMetadataContent(resolvedConversationId, [
 								{
 									type: 'text',
-									text: `Error: ${message}`,
+									text: formatExecutionOutput(result),
 								},
+								...formatRawFetchHostNudgeContent(rawFetchHostNudges),
 								...formatSurfacedMemoriesMarkdown(surfacedMemories),
 							]),
 							structuredContent: {
@@ -585,52 +541,163 @@ export async function registerExecuteTool(agent: McpRegistrationAgent) {
 								timing,
 								...(runId ? { runId } : {}),
 								returnedBytes: 0,
-								error: message,
-								result: passthrough?.structuredResult ?? null,
+								error: errorMessage,
+								errorDetails,
+								...entitlementStructuredContent(result.error),
 								logs: result.logs ?? [],
+								...(rawFetchHostNudges.length > 0
+									? { warnings: rawFetchHostNudges }
+									: {}),
 								...buildMemoryStructuredContent(surfacedMemories),
 							},
 							isError: true,
 						}
 					}
 
-					const contentLimited = limitMcpContentBlocks(
-						validatedContent,
-						defaultMcpContentLimitBytes,
-					)
-					if (!contentLimited.ok) {
+					logMcpEvent({
+						category: 'mcp',
+						tool: 'execute',
+						toolName: 'execute',
+						outcome: 'success',
+						durationMs,
+						...mcpCallerFields,
+						registeredCapabilityCount,
+						sandboxError: false,
+						context: activeStorageId
+							? { storageId: activeStorageId }
+							: undefined,
+					})
+					const responseLimitBytes =
+						responseLimit ?? defaultExecutionResponseLimitBytes
+					const passthrough = extractMcpPassthrough(result.result)
+					const rawContent = passthrough?.content ?? null
+
+					if (rawContent) {
+						let validatedContent: Array<ContentBlock>
+						try {
+							validatedContent = validateDownstreamMcpContentBlocks(
+								rawContent,
+								{
+									kind: 'execute',
+									label: 'default export (__mcpContent)',
+								},
+							)
+						} catch (error) {
+							const message = getErrorMessage(error)
+							return {
+								content: prependToolMetadataContent(resolvedConversationId, [
+									{
+										type: 'text',
+										text: `Error: ${message}`,
+									},
+									...formatSurfacedMemoriesMarkdown(surfacedMemories),
+								]),
+								structuredContent: {
+									conversationId: resolvedConversationId,
+									timing,
+									...(runId ? { runId } : {}),
+									returnedBytes: 0,
+									error: message,
+									result: passthrough?.structuredResult ?? null,
+									logs: result.logs ?? [],
+									...buildMemoryStructuredContent(surfacedMemories),
+								},
+								isError: true,
+							}
+						}
+
+						const contentLimited = limitMcpContentBlocks(
+							validatedContent,
+							defaultMcpContentLimitBytes,
+						)
+						if (!contentLimited.ok) {
+							return {
+								content: prependToolMetadataContent(resolvedConversationId, [
+									{
+										type: 'text',
+										text: `Error: ${contentLimited.note}`,
+									},
+									...formatSurfacedMemoriesMarkdown(surfacedMemories),
+								]),
+								structuredContent: {
+									conversationId: resolvedConversationId,
+									timing,
+									...(runId ? { runId } : {}),
+									returnedBytes: contentLimited.returnedBytes,
+									truncated: true,
+									note: contentLimited.note,
+									result: passthrough?.structuredResult ?? null,
+									logs: result.logs ?? [],
+									...buildMemoryStructuredContent(surfacedMemories),
+								},
+								isError: true,
+							}
+						}
+
+						const companionLimited =
+							passthrough?.structuredResult === undefined ||
+							passthrough.structuredResult === null
+								? null
+								: limitExecutionResultValue(
+										passthrough.structuredResult,
+										responseLimitBytes,
+									)
+						const isError = passthrough?.isError ?? false
+						if (!isError) {
+							await scheduleFleetExecuteLastSuccess({
+								waitUntil,
+								kv: env.BUNDLE_ARTIFACTS_KV,
+							})
+						}
+
 						return {
 							content: prependToolMetadataContent(resolvedConversationId, [
-								{
-									type: 'text',
-									text: `Error: ${contentLimited.note}`,
-								},
+								...contentLimited.blocks,
+								...formatRawFetchHostNudgeContent(rawFetchHostNudges),
 								...formatSurfacedMemoriesMarkdown(surfacedMemories),
 							]),
 							structuredContent: {
 								conversationId: resolvedConversationId,
 								timing,
 								...(runId ? { runId } : {}),
-								returnedBytes: contentLimited.returnedBytes,
-								truncated: true,
-								note: contentLimited.note,
-								result: passthrough?.structuredResult ?? null,
+								returnedBytes:
+									contentLimited.returnedBytes +
+									(companionLimited?.returnedBytes ?? 0),
+								...(companionLimited?.truncated
+									? {
+											truncated: true,
+											note: companionLimited.note,
+										}
+									: {}),
+								result: companionLimited
+									? companionLimited.value
+									: (passthrough?.structuredResult ?? null),
 								logs: result.logs ?? [],
+								...(rawFetchHostNudges.length > 0
+									? { warnings: rawFetchHostNudges }
+									: {}),
 								...buildMemoryStructuredContent(surfacedMemories),
 							},
-							isError: true,
+							isError,
 						}
 					}
 
-					const companionLimited =
-						passthrough?.structuredResult === undefined ||
-						passthrough.structuredResult === null
-							? null
-							: limitExecutionResultValue(
-									passthrough.structuredResult,
-									responseLimitBytes,
-								)
-					const isError = passthrough?.isError ?? false
+					const limitedResult = limitExecutionResultValue(
+						result.result,
+						responseLimitBytes,
+					)
+					const markerOnlyPassthrough =
+						passthrough &&
+						(passthrough.isError || passthrough.structuredResult !== null)
+							? passthrough
+							: null
+					const structuredResultValue = markerOnlyPassthrough
+						? limitExecutionResultValue(
+								markerOnlyPassthrough.structuredResult ?? {},
+								responseLimitBytes,
+							)
+						: limitedResult
+					const isError = markerOnlyPassthrough?.isError ?? false
 					if (!isError) {
 						await scheduleFleetExecuteLastSuccess({
 							waitUntil,
@@ -640,7 +707,15 @@ export async function registerExecuteTool(agent: McpRegistrationAgent) {
 
 					return {
 						content: prependToolMetadataContent(resolvedConversationId, [
-							...contentLimited.blocks,
+							{
+								type: 'text',
+								text: formatLimitedExecutionOutput({
+									value: structuredResultValue.value,
+									truncated: structuredResultValue.truncated,
+									note: structuredResultValue.note,
+									displayText: structuredResultValue.displayText,
+								}),
+							},
 							...formatRawFetchHostNudgeContent(rawFetchHostNudges),
 							...formatSurfacedMemoriesMarkdown(surfacedMemories),
 						]),
@@ -648,18 +723,14 @@ export async function registerExecuteTool(agent: McpRegistrationAgent) {
 							conversationId: resolvedConversationId,
 							timing,
 							...(runId ? { runId } : {}),
-							returnedBytes:
-								contentLimited.returnedBytes +
-								(companionLimited?.returnedBytes ?? 0),
-							...(companionLimited?.truncated
+							returnedBytes: structuredResultValue.returnedBytes,
+							...(structuredResultValue.truncated
 								? {
 										truncated: true,
-										note: companionLimited.note,
+										note: structuredResultValue.note,
 									}
 								: {}),
-							result: companionLimited
-								? companionLimited.value
-								: (passthrough?.structuredResult ?? null),
+							result: structuredResultValue.value,
 							logs: result.logs ?? [],
 							...(rawFetchHostNudges.length > 0
 								? { warnings: rawFetchHostNudges }
@@ -669,66 +740,7 @@ export async function registerExecuteTool(agent: McpRegistrationAgent) {
 						isError,
 					}
 				}
-
-				const limitedResult = limitExecutionResultValue(
-					result.result,
-					responseLimitBytes,
-				)
-				const markerOnlyPassthrough =
-					passthrough &&
-					(passthrough.isError || passthrough.structuredResult !== null)
-						? passthrough
-						: null
-				const structuredResultValue = markerOnlyPassthrough
-					? limitExecutionResultValue(
-							markerOnlyPassthrough.structuredResult ?? {},
-							responseLimitBytes,
-						)
-					: limitedResult
-				const isError = markerOnlyPassthrough?.isError ?? false
-				if (!isError) {
-					await scheduleFleetExecuteLastSuccess({
-						waitUntil,
-						kv: env.BUNDLE_ARTIFACTS_KV,
-					})
-				}
-
-				return {
-					content: prependToolMetadataContent(resolvedConversationId, [
-						{
-							type: 'text',
-							text: formatLimitedExecutionOutput({
-								value: structuredResultValue.value,
-								truncated: structuredResultValue.truncated,
-								note: structuredResultValue.note,
-								displayText: structuredResultValue.displayText,
-							}),
-						},
-						...formatRawFetchHostNudgeContent(rawFetchHostNudges),
-						...formatSurfacedMemoriesMarkdown(surfacedMemories),
-					]),
-					structuredContent: {
-						conversationId: resolvedConversationId,
-						timing,
-						...(runId ? { runId } : {}),
-						returnedBytes: structuredResultValue.returnedBytes,
-						...(structuredResultValue.truncated
-							? {
-									truncated: true,
-									note: structuredResultValue.note,
-								}
-							: {}),
-						result: structuredResultValue.value,
-						logs: result.logs ?? [],
-						...(rawFetchHostNudges.length > 0
-							? { warnings: rawFetchHostNudges }
-							: {}),
-						...buildMemoryStructuredContent(surfacedMemories),
-					},
-					isError,
-				}
-			}
-		},
+			}),
 	)
 }
 

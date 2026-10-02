@@ -36,6 +36,11 @@ export async function createStableDynamicWorkerId(input: {
 	storageContext: StorageContext | null
 	workerOptions: DynamicWorkerIdOptions
 	cacheKeyVersion?: number
+	/**
+	 * Per-OAuth-client policy bound into the worker's gateway props (self-host
+	 * fork). Omitted from the hash when absent so existing ids are unchanged.
+	 */
+	clientAccess?: unknown
 }) {
 	if (!areWorkerModulesDeterministicallyHashable(input.workerOptions.modules)) {
 		return `${dynamicWorkerIdPrefix}${crypto.randomUUID()}`
@@ -50,6 +55,9 @@ export async function createStableDynamicWorkerId(input: {
 			compatibilityFlags: input.workerOptions.compatibilityFlags,
 			mainModule: input.workerOptions.mainModule,
 			modules: input.workerOptions.modules,
+			...(input.clientAccess != null
+				? { clientAccess: input.clientAccess }
+				: {}),
 		}),
 	)
 	return `${dynamicWorkerIdPrefix}${hash.slice(0, 43)}`

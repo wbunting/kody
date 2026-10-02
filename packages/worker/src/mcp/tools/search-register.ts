@@ -1,4 +1,5 @@
 import { type McpRegistrationAgent } from '#mcp/mcp-registration-agent.ts'
+import { runMcpToolWithClientAccess } from '#worker/mcp-client-access/service.ts'
 
 import {
 	searchTool,
@@ -21,6 +22,9 @@ export async function registerSearchTool(agent: McpRegistrationAgent) {
 			annotations: searchTool.annotations,
 			...(icons ? { icons } : {}),
 		},
-		async (args: SearchToolArgs) => runSearchTool({ agent, args }),
+		async (args: SearchToolArgs) =>
+			runMcpToolWithClientAccess(agent, (scopedAgent) =>
+				runSearchTool({ agent: scopedAgent, args }),
+			),
 	)
 }

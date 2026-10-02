@@ -8,6 +8,7 @@ import {
 	type ViewerListingInstall,
 } from '#universal/community-public-types.ts'
 import { type PermissionString, type RoleName } from '#universal/permissions.ts'
+import { type McpClientAccessPolicy } from '@kody-internal/shared/mcp-client-access.ts'
 import { type AdminFeatureFlag } from '#universal/feature-flags/types.ts'
 import { type OnboardingChecklistItemId } from '#universal/onboarding-checklist-types.ts'
 import {
@@ -1212,11 +1213,23 @@ export type AccountMcpOauthClientsLoaderData = {
 
 export type AccountConnectedAgentListItem = ConnectedMcpAgent & {
 	grantIds: Array<string>
+	/** Per-OAuth-client access policy (self-host fork); null = full access. */
+	access?: McpClientAccessPolicy | null
+}
+
+/** Choices the per-connection access editor offers (self-host fork). */
+export type McpClientAccessOptions = {
+	packages: Array<{ id: string; name: string; description: string }>
+	domains: Array<{ name: string; description: string; locked: boolean }>
+	secrets: Array<{ name: string; description: string }>
+	integrations: Array<{ name: string }>
+	secretProviders: Array<{ name: string }>
 }
 
 export type AccountConnectedAgentsLoaderData = {
 	ok: true
 	agents: Array<AccountConnectedAgentListItem>
+	accessOptions?: McpClientAccessOptions
 	/**
 	 * This deployment's MCP URL for connecting another host. Empty until the
 	 * account email is verified, matching the onboarding payload, so the page

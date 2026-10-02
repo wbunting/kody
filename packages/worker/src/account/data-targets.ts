@@ -271,6 +271,7 @@ export const accountUserDataTargets: ReadonlyArray<UserScopedDataTarget> = [
 	{ kind: 'user_id', table: 'user_integrations' },
 	{ kind: 'user_id', table: 'user_oauth_apps' },
 	{ kind: 'user_id', table: 'mcp_server_settings' },
+	{ kind: 'user_id', table: 'mcp_client_access_policies' },
 	// Job rows (`jobs`, `archived_job_artifacts`) live in the jobs worker's
 	// database (ADR 0016); account deletion reaches them through the JOBS
 	// service binding's purgeUser and export through listArchivedJobArtifacts /

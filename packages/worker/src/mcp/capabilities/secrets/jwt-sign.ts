@@ -7,6 +7,7 @@ import { createUnresolvedSecretMessage } from '#mcp/secrets/unresolved-secret.ts
 import { assertPackageCanAccessResolvedSecret } from '#mcp/secrets/package-access.ts'
 import { resolveCallerSecretAuthority } from '#mcp/secrets/secret-authority.ts'
 import { resolveSecret } from '#mcp/secrets/service.ts'
+import { assertMcpClientCanUseUserSecret } from '#worker/mcp-client-access/enforce.ts'
 import { secretScopeValues } from '#mcp/secrets/types.ts'
 import {
 	decodeHmacKeyMaterial,
@@ -112,6 +113,12 @@ export const jwtSignCapability = defineDomainCapability(
 						baseUrl: ctx.callerContext.baseUrl,
 					}),
 				)
+			}
+			if ((resolved.scope ?? 'user') === 'user') {
+				assertMcpClientCanUseUserSecret({
+					policy: ctx.callerContext,
+					name: args.private_key_secret_name,
+				})
 			}
 			await assertPackageCanAccessResolvedSecret({
 				env: ctx.env,

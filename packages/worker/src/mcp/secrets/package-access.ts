@@ -24,6 +24,7 @@ import {
 	type LoadedPackageManifest,
 } from '#worker/package-registry/source.ts'
 import { type SavedPackageRecord } from '#worker/package-registry/types.ts'
+import { assertMcpClientCanUseUserSecret } from '#worker/mcp-client-access/enforce.ts'
 
 type SecretMountDefinition = {
 	name: string
@@ -394,6 +395,13 @@ export async function resolvePackageMountedSecret(input: {
 				baseUrl: input.callerContext.baseUrl,
 			}),
 		)
+	}
+	if ((resolved.scope ?? 'user') === 'user') {
+		// Per-OAuth-client credential gate (self-host fork).
+		assertMcpClientCanUseUserSecret({
+			policy: input.callerContext,
+			name: mount.name,
+		})
 	}
 	await assertPackageCanAccessResolvedSecret({
 		env: input.env,

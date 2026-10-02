@@ -15,6 +15,8 @@ import {
 	packageRetrieverOutputSchema,
 } from './types.ts'
 import { listPackageRetrieversForScope } from './manifest-cache.ts'
+import { mcpClientPolicyAllowsPackage } from '@kody-internal/shared/mcp-client-access.ts'
+import { getAmbientMcpClientAccess } from '#worker/mcp-client-access/scope.ts'
 
 const defaultSearchLimit = 5
 const defaultContextLimit = 2
@@ -219,8 +221,14 @@ async function loadScopeEntries(input: {
 	userId: string
 	scope: PackageRetrieverScope
 }) {
+	// Per-OAuth-client package gate (self-host fork): retrievers are package
+	// code, so a restricted connection only runs allowlisted packages' ones.
+	const clientAccess = getAmbientMcpClientAccess()
 	return (await listPackageRetrieversForScope(input))
 		.filter((entry) => entry.scopes.includes(input.scope))
+		.filter((entry) =>
+			mcpClientPolicyAllowsPackage(clientAccess, entry.packageId),
+		)
 		.sort(
 			(left, right) =>
 				left.kodyId.localeCompare(right.kodyId) ||

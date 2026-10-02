@@ -7,6 +7,7 @@ import {
 	type McpStorageContext,
 	type McpUserContext,
 } from '@kody-internal/shared/chat.ts'
+import { type McpClientAccessPolicy } from '@kody-internal/shared/mcp-client-access.ts'
 
 export type McpServerProps = McpCallerContext
 
@@ -16,6 +17,7 @@ export function createMcpCallerContext(input: {
 	user?: McpUserContext | null
 	storageContext?: McpStorageContext | null
 	repoContext?: McpRepoContext | null
+	clientAccess?: McpClientAccessPolicy | null
 }): McpCallerContext {
 	return {
 		baseUrl: input.baseUrl,
@@ -23,6 +25,7 @@ export function createMcpCallerContext(input: {
 		user: input.user ?? null,
 		storageContext: input.storageContext ?? null,
 		repoContext: input.repoContext ?? null,
+		...(input.clientAccess ? { clientAccess: input.clientAccess } : {}),
 	}
 }
 

@@ -1,6 +1,14 @@
 import { jsonResponse } from '#worker/json-response.ts'
 import { type Action } from 'remix/router'
-import { enum_, object, parseSafe, string } from 'remix/data-schema'
+import {
+	array,
+	enum_,
+	type InferOutput,
+	object,
+	optional,
+	parseSafe,
+	string,
+} from 'remix/data-schema'
 import {
 	auditDatabaseFromEnv,
 	getRequestIp,
@@ -24,6 +32,16 @@ import {
 	type OAuthGrantListHelpers,
 } from '#worker/oauth-grants.ts'
 import { buildMcpServerUrl } from '#worker/onboarding-prompts.ts'
+import { type McpClientAccessPolicy } from '@kody-internal/shared/mcp-client-access.ts'
+import {
+	loadMcpClientAccessOptions,
+	loadMcpClientAccessPoliciesByClientId,
+	sanitizeMcpClientAccessPolicyInput,
+} from '#worker/mcp-client-access/options.ts'
+import {
+	deleteMcpClientAccessPolicy,
+	upsertMcpClientAccessPolicy,
+} from '#worker/mcp-client-access/repo.ts'
 import { parseAccountConnectionsPathname } from '#universal/account-connections.ts'
 import { type AccountConnectedAgentsLoaderData } from '#universal/loader-data.ts'
 import { type routes } from '#universal/routes.ts'
@@ -40,9 +58,21 @@ export async function loadAccountConnectedAgentsData(input: {
 }): Promise<AccountConnectedAgentsLoaderData> {
 	const stableUserId = input.user.mcpUser.userId
 	const helpers = await resolveOAuthHelpers<OAuthGrantListHelpers>(input.env)
-	const state = await loadInboundMcpConnectionState(helpers, stableUserId, {
-		env: input.env,
-	})
+	const [state, policiesByClientId, accessOptions] = await Promise.all([
+		loadInboundMcpConnectionState(helpers, stableUserId, {
+			env: input.env,
+		}),
+		// Listing stays available if the access-policy tables are unreadable;
+		// enforcement itself (mcp-auth) fails closed independently.
+		loadMcpClientAccessPoliciesByClientId({
+			env: input.env,
+			userId: stableUserId,
+		}).catch(() => new Map<string, McpClientAccessPolicy>()),
+		loadMcpClientAccessOptions({
+			env: input.env,
+			userId: stableUserId,
+		}).catch(() => undefined),
+	])
 	const ecosystemCount = countConnectedAgentEcosystems(state.agents)
 	if (!state.listingFailed && hasSecondConnectedMcpClient(state.agents)) {
 		await maybeEvaluateSecondAgentStandardGift({
@@ -54,7 +84,11 @@ export async function loadAccountConnectedAgentsData(input: {
 	}
 	return {
 		ok: true,
-		agents: state.agents,
+		agents: state.agents.map((agent) => ({
+			...agent,
+			access: policiesByClientId.get(agent.clientId) ?? null,
+		})),
+		...(accessOptions ? { accessOptions } : {}),
 		mcpServerUrl: input.user.emailVerified
 			? buildMcpServerUrl({ env: input.env, requestUrl: input.requestUrl })
 			: '',
@@ -133,6 +167,16 @@ export function createAccountConnectedAgentsApiHandler(env: Env) {
 			}
 
 			const body = await request.json().catch(() => null)
+			const accessParsed = parseSafe(accessSchema, body)
+			if (accessParsed.success) {
+				return await handleAccessIntent({
+					env,
+					request,
+					url,
+					user,
+					input: accessParsed.value,
+				})
+			}
 			const parsed = parseSafe(revokeSchema, body)
 			if (!parsed.success || parsed.value.intent !== 'revoke') {
 				return jsonResponse({ ok: false, error: 'Invalid request body.' }, 400)
@@ -159,6 +203,16 @@ export function createAccountConnectedAgentsApiHandler(env: Env) {
 				)
 			}
 
+			// Best-effort: a stale policy row for a revoked client is inert (no
+			// grant can present that client id for this user any more).
+			await Promise.resolve()
+				.then(() =>
+					deleteMcpClientAccessPolicy(env.APP_DB, {
+						userId: user.mcpUser.userId,
+						clientId: parsed.value.clientId.trim(),
+					}),
+				)
+				.catch(() => undefined)
 			void logAuditEvent({
 				db: auditDatabaseFromEnv(env),
 				category: 'oauth',
@@ -184,3 +238,88 @@ const revokeSchema = object({
 	intent: enum_(['revoke'] as const),
 	clientId: string(),
 })
+
+const accessModeSchema = enum_(['all', 'allowlist'] as const)
+
+/**
+ * Per-OAuth-client access edits (self-host fork). `set-access` replaces the
+ * client's policy; `clear-access` restores the full grant.
+ */
+const accessSchema = object({
+	intent: enum_(['set-access', 'clear-access'] as const),
+	clientId: string(),
+	policy: optional(
+		object({
+			packageMode: accessModeSchema,
+			allowedPackageIds: array(string()),
+			domainMode: accessModeSchema,
+			allowedDomains: array(string()),
+			credentialMode: accessModeSchema,
+			allowedSecretNames: array(string()),
+			allowedIntegrations: array(string()),
+			allowedSecretProviders: array(string()),
+		}),
+	),
+})
+
+async function handleAccessIntent(input: {
+	env: Env
+	request: Request
+	url: URL
+	user: NonNullable<Awaited<ReturnType<typeof readAuthenticatedAppUser>>>
+	input: InferOutput<typeof accessSchema>
+}) {
+	const { env, user } = input
+	const clientId = input.input.clientId.trim()
+	if (!clientId) {
+		return jsonResponse({ ok: false, error: 'clientId is required.' }, 400)
+	}
+	const helpers = await resolveOAuthHelpers<OAuthGrantListHelpers>(env)
+	const state = await loadInboundMcpConnectionState(
+		helpers,
+		user.mcpUser.userId,
+		{ env },
+	)
+	if (!state.agents.some((agent) => agent.clientId === clientId)) {
+		return jsonResponse({ ok: false, error: 'Connected agent not found.' }, 404)
+	}
+	if (input.input.intent === 'clear-access') {
+		await deleteMcpClientAccessPolicy(env.APP_DB, {
+			userId: user.mcpUser.userId,
+			clientId,
+		})
+	} else {
+		if (!input.input.policy) {
+			return jsonResponse({ ok: false, error: 'policy is required.' }, 400)
+		}
+		const options = await loadMcpClientAccessOptions({
+			env,
+			userId: user.mcpUser.userId,
+		})
+		await upsertMcpClientAccessPolicy(env.APP_DB, {
+			userId: user.mcpUser.userId,
+			clientId,
+			policy: sanitizeMcpClientAccessPolicyInput(input.input.policy, options),
+		})
+	}
+	void logAuditEvent({
+		db: auditDatabaseFromEnv(env),
+		category: 'oauth',
+		action:
+			input.input.intent === 'clear-access'
+				? 'mcp_client_access_clear'
+				: 'mcp_client_access_set',
+		result: 'success',
+		email: user.email,
+		ip: getRequestIp(input.request) ?? undefined,
+		path: input.url.pathname,
+		clientId,
+	})
+	return jsonResponse(
+		await loadAccountConnectedAgentsData({
+			env,
+			requestUrl: input.request.url,
+			user,
+		}),
+	)
+}

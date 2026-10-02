@@ -28,6 +28,7 @@ export type McpAuthDenialReason =
 	| 'role'
 	| 'permission'
 	| 'feature_flag'
+	| 'client_policy'
 	| 'denied'
 
 export async function recordMcpAuthDenial(input: {

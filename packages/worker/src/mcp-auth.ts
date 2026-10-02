@@ -6,6 +6,7 @@ import { isRecord } from '@kody-internal/shared/is-record.ts'
 import { getAppBaseUrl } from '#worker/app-base-url.ts'
 import { auditDatabaseFromEnv, getRequestIp } from '#worker/audit-log.ts'
 import { buildMcpUserContextFromGrantProps } from './mcp-auth-user-context.ts'
+import { loadMcpClientAccess } from './mcp-client-access/service.ts'
 import {
 	type McpAuthDenialReason,
 	recordMcpAuthDenial,
@@ -357,10 +358,22 @@ export async function handleMcpRequest({
 		return createUnauthorizedResponse(origin, 'invalid_token')
 	}
 
+	// Per-OAuth-client access policy (self-host fork). Read fresh per request
+	// so edits on /account/connections apply on the next call. A lookup
+	// failure fails closed rather than silently widening to the full grant.
+	const inboundClientIdForPolicy = tokenSummary.grant.clientId?.trim() ?? ''
+	const clientAccess = inboundClientIdForPolicy
+		? await loadMcpClientAccess(env.APP_DB, {
+				userId: mcpUser.userId,
+				clientId: inboundClientIdForPolicy,
+			})
+		: null
+
 	const props: OAuthContextProps = createMcpCallerContext({
 		baseUrl: origin,
 		executionOrigin: 'interactive',
 		user: mcpUser,
+		clientAccess,
 	})
 	context.props = props
 

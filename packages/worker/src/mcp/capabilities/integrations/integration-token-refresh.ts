@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { McpCallerError } from '#mcp/caller-error.ts'
 import { defineDomainCapability } from '#mcp/capabilities/define-domain-capability.ts'
+import { assertMcpClientCanUseIntegration } from '#worker/mcp-client-access/enforce.ts'
 import { capabilityDomainNames } from '#mcp/capabilities/domain-metadata.ts'
 import { requireMcpUser } from '#mcp/capabilities/meta/require-user.ts'
 import { type CapabilityContext } from '#mcp/capabilities/types.ts'
@@ -47,6 +48,10 @@ export const integrationTokenRefreshCapability = defineDomainCapability(
 		outputSchema,
 		async handler(args, ctx: CapabilityContext) {
 			const user = requireMcpUser(ctx.callerContext)
+			assertMcpClientCanUseIntegration({
+				policy: ctx.callerContext,
+				name: args.name,
+			})
 			try {
 				const result = await refreshIntegrationTokens({
 					env: ctx.env,

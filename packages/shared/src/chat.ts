@@ -8,6 +8,10 @@ import {
 	type InferOutput,
 	union,
 } from 'remix/data-schema'
+import {
+	mcpClientAccessPolicySchema,
+	type McpClientAccessPolicy,
+} from './mcp-client-access.ts'
 
 export const mcpUserContextSchema = object({
 	userId: string(),
@@ -48,6 +52,11 @@ export const mcpCallerContextSchema = object({
 	user: optional(nullable(mcpUserContextSchema)),
 	storageContext: optional(nullable(mcpStorageContextSchema)),
 	repoContext: optional(nullable(mcpRepoContextSchema)),
+	/**
+	 * Per-OAuth-client access policy (self-host fork). Set only by `/mcp` auth
+	 * from D1; absent means the full assistant grant.
+	 */
+	clientAccess: optional(nullable(mcpClientAccessPolicySchema)),
 })
 
 type McpUserContextInferred = InferOutput<typeof mcpUserContextSchema>
@@ -65,6 +74,10 @@ export type McpRepoContext = InferOutput<typeof mcpRepoContextSchema>
 export type McpExecutionOrigin = InferOutput<typeof mcpExecutionOriginSchema>
 type McpCallerContextInferred = InferOutput<typeof mcpCallerContextSchema>
 
-export type McpCallerContext = Omit<McpCallerContextInferred, 'user'> & {
+export type McpCallerContext = Omit<
+	McpCallerContextInferred,
+	'user' | 'clientAccess'
+> & {
 	user?: McpUserContext | null
+	clientAccess?: McpClientAccessPolicy | null
 }

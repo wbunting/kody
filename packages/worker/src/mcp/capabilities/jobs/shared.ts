@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import { McpCallerError } from '#mcp/caller-error.ts'
+import { packageIdFromJobId } from '@kody-internal/shared/jobs/package-job-id.ts'
+import { assertMcpClientCanUsePackage } from '#worker/mcp-client-access/enforce.ts'
 import { requireMcpUser } from '#mcp/capabilities/meta/require-user.ts'
 import { type CapabilityContext } from '#mcp/capabilities/types.ts'
 import {
@@ -586,6 +588,14 @@ export async function runJobNowFromArgs(input: {
 	args: JobRunNowCapabilityInput
 }) {
 	const user = requireMcpUser(input.callerContext)
+	const jobPackageId = packageIdFromJobId(input.args.id)
+	if (jobPackageId) {
+		assertMcpClientCanUsePackage({
+			policy: input.callerContext,
+			packageId: jobPackageId,
+			packageName: jobPackageId,
+		})
+	}
 	const { runJobNowViaManager } = await import('#worker/jobs/manager-client.ts')
 	const result = await runJobNowViaManager({
 		env: input.env,

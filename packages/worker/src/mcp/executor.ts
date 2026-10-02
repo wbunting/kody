@@ -80,6 +80,10 @@ import {
 	withDynamicWorkerEvaluationPermit,
 } from '#worker/dynamic-worker-evaluation-budget.ts'
 import {
+	getAmbientMcpClientAccess,
+	runWithMcpClientAccess,
+} from '#worker/mcp-client-access/scope.ts'
+import {
 	executorSandboxTimeoutMessage,
 	executorSandboxTimeoutMessageExplanation,
 	executorSandboxTimeoutMessagePrefix,
@@ -638,6 +642,10 @@ function createStableDynamicWorkerExecutor(input: DynamicWorkerExecutorInput) {
 				userId: input.gatewayProps.userId,
 				storageContext: input.gatewayProps.storageContext,
 				workerOptions,
+				// The gateway props (and its per-client policy) are bound into the
+				// loaded worker's globalOutbound, so a cached worker must never be
+				// shared across different OAuth client policies (self-host fork).
+				clientAccess: input.gatewayProps.clientAccess ?? null,
 			})
 			const claimedDay = recordUniqueDynamicWorkerDay({
 				env: input.usageEnv,
@@ -1029,6 +1037,9 @@ export function createToolDispatchers(
 	sideEffects?: EvaluationSideEffectTracker,
 ) {
 	const capturedEvaluationContext = getDynamicWorkerEvaluationContext()
+	// Sandbox → host RPC callbacks do not reliably inherit async-local state,
+	// so re-enter the per-OAuth-client policy explicitly (self-host fork).
+	const capturedClientAccess = getAmbientMcpClientAccess()
 	const dispatchers: Record<string, ToolDispatcher> = {}
 	for (const provider of providers) {
 		const sanitizedFns: Record<
@@ -1057,23 +1068,26 @@ export function createToolDispatchers(
 					takeSecretAuthorityFromCapabilityArgs(rawArgs)
 				return await runWithCapturedDynamicWorkerEvaluationContext(
 					capturedEvaluationContext,
-					async () => {
-						if (!executionState.active) {
-							throw new Error('Execution has already completed.')
-						}
-						if (
-							sideEffects &&
-							!isPlatformOnlyHostSideEffectProvider(provider.name)
-						) {
-							sideEffects.recordDispatcherAttempt()
-						}
-						const invoke = () =>
-							abortSignalToolNames.has(name) ? fn(...args, signal) : fn(...args)
-						return await runWithCurrentSecretAuthority(
-							requestedPackageId,
-							invoke,
-						)
-					},
+					async () =>
+						await runWithMcpClientAccess(capturedClientAccess, async () => {
+							if (!executionState.active) {
+								throw new Error('Execution has already completed.')
+							}
+							if (
+								sideEffects &&
+								!isPlatformOnlyHostSideEffectProvider(provider.name)
+							) {
+								sideEffects.recordDispatcherAttempt()
+							}
+							const invoke = () =>
+								abortSignalToolNames.has(name)
+									? fn(...args, signal)
+									: fn(...args)
+							return await runWithCurrentSecretAuthority(
+								requestedPackageId,
+								invoke,
+							)
+						}),
 				)
 			}
 		}
