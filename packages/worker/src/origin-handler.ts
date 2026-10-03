@@ -32,6 +32,7 @@ import { withCors } from './utils.ts'
 import { normalizeRedirectTo } from '#app/auth-redirect.ts'
 import { checkAuthRateLimit } from '#app/rate-limit.ts'
 import { getRequestIp } from '#worker/audit-log.ts'
+import { seedDevCimdCacheForRequest } from '#worker/dev-cimd-prefetch.ts'
 import { discardUnreadRequestBody } from '#worker/request-body.ts'
 import { handleCapabilityReindexRequest } from './capability-maintenance.ts'
 import { handleExecuteSmokeRequest } from './execute-maintenance.ts'
@@ -678,6 +679,7 @@ async function handleOriginAppFetch(
 			return addOAuthDiscoveryCorsHeaders(metadataResponse, request)
 		}
 	}
+	await seedDevCimdCacheForRequest(request, env)
 	try {
 		if (url.pathname === oauthPaths.token && request.method === 'POST') {
 			const { response, grantType } = await handleMcpOAuthTokenRequest({

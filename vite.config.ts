@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -15,6 +16,7 @@ import { writeLocalRuntimeDevConfig } from './tools/local-runtime-dev-config.ts'
 import { ensureGuideCatalogModules } from './tools/build-guide-catalog-modules.ts'
 import { ensureWorkerBundlerModules } from './tools/build-worker-bundler-modules.ts'
 import { markdownAsText } from './tools/vite-markdown-as-text.ts'
+import { devCimdProxy, devCimdProxyPath } from './tools/vite-dev-cimd-proxy.ts'
 import { workerWholeGraphReload } from './tools/vite-worker-whole-graph-reload.ts'
 
 const root = path.dirname(fileURLToPath(import.meta.url))
@@ -57,6 +59,7 @@ export default defineConfig(async ({ command }) => {
 		devOnly: true
 	}> = []
 	let serveWranglerConfigPath = wranglerConfigPath
+	const devCimdProxyToken = randomUUID()
 
 	if (command === 'serve' && !isOriginDeployBuild) {
 		// Vite's Cloudflare plugin reads Worker bindings from the Wrangler
@@ -65,7 +68,15 @@ export default defineConfig(async ({ command }) => {
 		serveWranglerConfigPath = await writeLocalOriginDevConfig({
 			originConfigPath: wranglerConfigPath,
 			envName,
-			vars: collectLocalOriginDevVars(process.env, process.env.PORT),
+			vars: {
+				...collectLocalOriginDevVars(process.env, process.env.PORT),
+				...(process.env.PORT
+					? {
+							KODY_DEV_CIMD_PROXY_URL: `http://127.0.0.1:${process.env.PORT}${devCimdProxyPath}`,
+							KODY_DEV_CIMD_PROXY_TOKEN: devCimdProxyToken,
+						}
+					: {}),
+			},
 		})
 		// Jobs + highlight stay attached in the test env (Playwright e2e).
 		// Platform/runtime have no test env and stay skipped there.
@@ -113,6 +124,7 @@ export default defineConfig(async ({ command }) => {
 		},
 		plugins: [
 			markdownAsText(),
+			devCimdProxy({ token: devCimdProxyToken }),
 			remix({
 				serverHandler: false,
 				clientEntry: 'packages/worker/client/entry.tsx',

@@ -281,6 +281,10 @@ export const EnvSchema = object({
 	// YouTube's public browse endpoint so local/preview still work.
 	YOUTUBE_DATA_API_KEY: optionalNonEmptyStringSchema,
 	WRANGLER_IS_LOCAL_DEV: optionalNonEmptyStringSchema,
+	// Local dev only (written by vite.config.ts): Node-side CIMD fetch used
+	// to seed the OAuth provider cache when workerd's fetch is bot-blocked.
+	KODY_DEV_CIMD_PROXY_URL: optionalNonEmptyStringSchema,
+	KODY_DEV_CIMD_PROXY_TOKEN: optionalNonEmptyStringSchema,
 	GITHUB_CLIENT_ID: optionalNonEmptyStringSchema,
 	GITHUB_CLIENT_SECRET: optionalNonEmptyStringSchema,
 	GOOGLE_CLIENT_ID: optionalNonEmptyStringSchema,
