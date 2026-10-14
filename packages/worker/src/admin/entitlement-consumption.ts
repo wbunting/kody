@@ -9,7 +9,7 @@ import { readCurrentEntitlementResourceUsage } from '#worker/entitlements/servic
 import { type AdminUsageEntitlementConsumption } from '#universal/loader-data.ts'
 
 export const adminEntitlementResources = [
-	'saved_packages',
+	// Self-hosted fork: saved packages are unlimited (not enforced).
 	'scheduled_jobs',
 	'repo_sessions',
 	'email_sends_per_day',

@@ -151,7 +151,7 @@ export const accountUsageEntitlementResources = [
 	'outbound_fetches_per_day',
 	'job_runs_per_day',
 	'repos',
-	'saved_packages',
+	// Self-hosted fork: saved packages are unlimited (not enforced).
 	'scheduled_jobs',
 	'repo_sessions',
 	'stored_email_messages',

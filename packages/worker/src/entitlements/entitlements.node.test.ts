@@ -1189,34 +1189,15 @@ test('requested units and getCurrent overrides are honored', async () => {
 		}),
 	).rejects.toThrow('pass getCurrent')
 
-	const savedPackageLimit = planLimits.standard.maxSavedPackages
-	const nearSavedPackageLimit = savedPackageLimit - 3
-	const overSavedPackages = await assertWithinEntitlement({
-		db,
-		userId,
-		email: plannedEmail,
-		resource: 'saved_packages',
-		requested: 5,
-		getCurrent: async () => nearSavedPackageLimit,
-	}).then(
-		() => null,
-		(thrown: unknown) => thrown,
-	)
-	if (!(overSavedPackages instanceof EntitlementLimitError)) {
-		throw new Error('Expected an EntitlementLimitError.')
-	}
-	expect(overSavedPackages.details).toMatchObject({
-		resource: 'saved_packages',
-		limit: savedPackageLimit,
-		current: nearSavedPackageLimit,
-	})
+	// Self-hosted fork: saved packages are never enforced, even far past the
+	// plan's table value.
 	await assertWithinEntitlement({
 		db,
 		userId,
 		email: plannedEmail,
 		resource: 'saved_packages',
-		requested: 3,
-		getCurrent: async () => nearSavedPackageLimit,
+		requested: 5,
+		getCurrent: async () => planLimits.standard.maxSavedPackages * 10,
 	})
 })
 

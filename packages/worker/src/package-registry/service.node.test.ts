@@ -4,7 +4,6 @@ import {
 	consoleWarn,
 	silenceExpectedConsoleErrors,
 } from '#worker/test-support/console-spies.ts'
-import { isEntitlementLimitError } from '#worker/entitlements/errors.ts'
 import { planLimits } from '#universal/plans.ts'
 import { createStableUserIdFromEmail } from '#worker/user-id.ts'
 import {
@@ -1216,7 +1215,7 @@ function createEntitlementsDatabase(input: {
 	} as unknown as D1Database
 }
 
-test('refreshSavedPackageProjection enforces the saved packages entitlement on insert', async () => {
+test('refreshSavedPackageProjection does not gate inserts on the saved packages limit (self-hosted)', async () => {
 	setupDefaultMocks()
 	const email = 'planned@example.com'
 	const userId = await createStableUserIdFromEmail(email)
@@ -1238,31 +1237,16 @@ test('refreshSavedPackageProjection enforces the saved packages entitlement on i
 	})
 	mockModule.getSavedPackageById.mockResolvedValue(null)
 
-	const error = await refreshSavedPackageProjection({
+	await refreshSavedPackageProjection({
 		env,
 		baseUrl: 'https://heykody.dev',
 		userId,
 		userEmail: email,
 		packageId: 'package-new',
 		sourceId: 'source-new',
-	}).then(
-		() => null,
-		(thrown: unknown) => thrown,
-	)
-
-	if (!isEntitlementLimitError(error)) {
-		throw new Error(
-			'Expected an EntitlementLimitError from refreshSavedPackageProjection.',
-		)
-	}
-	expect(error.details).toMatchObject({
-		code: 'entitlement_limit_exceeded',
-		resource: 'saved_packages',
-		plan: 'pro',
-		limit,
-		current: limit,
 	})
-	expect(mockModule.insertSavedPackage).not.toHaveBeenCalled()
+
+	expect(mockModule.insertSavedPackage).toHaveBeenCalled()
 })
 
 test('refreshSavedPackageProjection preserves hidden across projection refresh', async () => {

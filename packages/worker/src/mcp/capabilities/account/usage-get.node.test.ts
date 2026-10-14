@@ -132,11 +132,10 @@ test('usageGet returns self-scoped entitlement snapshot', async () => {
 	expect(uniqueWorkerDays?.current).toBe(0)
 	expect(uniqueWorkerDays?.limit).toBe(2_000)
 	expect(uniqueWorkerDays?.overEightyPercent).toBe(false)
-	const saved = result.resources.find(
-		(row) => row.resource === 'saved_packages',
-	)
-	expect(saved?.current).toBe(1)
-	expect(saved?.limit).toBeGreaterThan(0)
+	// Self-hosted fork: saved packages are unlimited and not listed.
+	expect(
+		result.resources.some((row) => row.resource === 'saved_packages'),
+	).toBe(false)
 	const execute = result.resources.find(
 		(row) => row.resource === 'execute_calls_per_day',
 	)

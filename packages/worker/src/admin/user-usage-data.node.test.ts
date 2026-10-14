@@ -478,8 +478,8 @@ test('loadAdminUserUsageData warns above eighty percent of plan limits', async (
 		'2026-07',
 		'2026-06',
 	])
+	// Self-hosted fork: saved packages are unlimited, so 85 packages never warn.
 	expect(data?.warnings.map((warning) => warning.resource)).toEqual([
-		'saved_packages',
 		'email_sends_per_day',
 	])
 })
@@ -760,8 +760,8 @@ test('loadAdminUserUsageData reads daily counts from UserMeter (seeded then warm
 	expect(
 		warm?.entitlementConsumption.find(
 			(row) => row.resource === 'saved_packages',
-		)?.current,
-	).toBe(6)
+		),
+	).toBeUndefined()
 	expect(
 		warm?.entitlementConsumption.find(
 			(row) => row.resource === 'stored_email_messages',

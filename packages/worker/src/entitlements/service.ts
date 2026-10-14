@@ -1031,6 +1031,13 @@ export type AssertWithinEntitlementInput = {
 }
 
 /**
+ * Self-hosted fork: resources whose plan ceilings are not enforced. Creates
+ * are never denied, and the resources are left off usage/warning surfaces.
+ */
+export const unenforcedEntitlementResources: ReadonlySet<EntitlementResource> =
+	new Set<EntitlementResource>(['saved_packages'])
+
+/**
  * The single enforcement helper. Every entitlement enforcement point calls
  * this and lets the thrown EntitlementLimitError propagate unchanged so the
  * error shape and user-facing message stay identical across MCP and UI
@@ -1039,6 +1046,8 @@ export type AssertWithinEntitlementInput = {
 export async function assertWithinEntitlement(
 	input: AssertWithinEntitlementInput,
 ): Promise<void> {
+	// Self-hosted fork: saved packages are unlimited on every plan.
+	if (unenforcedEntitlementResources.has(input.resource)) return
 	// Cached plan resolution: quota limit lookup tolerates short-TTL
 	// staleness; usage counters below stay fresh on every call.
 	const entitlement = await getCachedUserEntitlement(input.db, {

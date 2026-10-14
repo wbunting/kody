@@ -120,10 +120,10 @@ test('readEntitlementUsageSnapshot warns at 80% and includes the account resourc
 	expect(
 		snapshot.warnings.some((row) => row.resource === 'email_sends_per_day'),
 	).toBe(true)
-	const packages = snapshot.resources.find(
-		(row) => row.resource === 'saved_packages',
-	)
-	expect(packages?.overEightyPercent).toBe(false)
+	// Self-hosted fork: saved packages are unlimited and not listed.
+	expect(
+		snapshot.resources.some((row) => row.resource === 'saved_packages'),
+	).toBe(false)
 	expect(
 		snapshot.resources.find((row) => row.resource === 'storage_bytes')?.current,
 	).toBe(6_000)

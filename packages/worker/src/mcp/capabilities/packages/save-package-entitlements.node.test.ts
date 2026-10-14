@@ -1,6 +1,5 @@
 import { expect, test, vi } from 'vitest'
 import type * as sourceSafetyPolicyModule from '#worker/repo/source-safety-policy.ts'
-import { isEntitlementLimitError } from '#worker/entitlements/errors.ts'
 import { planLimits } from '#universal/plans.ts'
 import { maxRepoSourceFileBytes } from '#worker/repo/large-file-policy.ts'
 import { PackagePublishLockedError } from '#worker/package-registry/package-publish-lock.ts'
@@ -307,7 +306,7 @@ function createHandlerContext(input: {
 	}
 }
 
-test('packageSave enforces the saved packages entitlement for plan users on create', async () => {
+test('packageSave does not gate creates on the saved packages limit (self-hosted)', async () => {
 	const email = 'planned@example.com'
 	const userId = await createStableUserIdFromEmail(email)
 	const limit = planLimits.pro.maxSavedPackages
@@ -335,24 +334,12 @@ test('packageSave enforces the saved packages entitlement for plan users on crea
 	setupPersistenceMocks()
 	const ctx = createHandlerContext({ db, userId, email })
 
-	const error = await savePackageCapability
-		.handler({ files: buildPackageFiles('new-package', 'planned') }, ctx)
-		.then(
-			() => null,
-			(thrown: unknown) => thrown,
-		)
+	await savePackageCapability.handler(
+		{ files: buildPackageFiles('new-package', 'planned') },
+		ctx,
+	)
 
-	if (!isEntitlementLimitError(error)) {
-		throw new Error('Expected an EntitlementLimitError from packageSave.')
-	}
-	expect(error.details).toMatchObject({
-		code: 'entitlement_limit_exceeded',
-		resource: 'saved_packages',
-		plan: 'pro',
-		limit,
-		current: limit,
-	})
-	expect(mockModule.ensureEntitySource).not.toHaveBeenCalled()
+	expect(mockModule.ensureEntitySource).toHaveBeenCalled()
 })
 
 test('packageSave does not gate updates to an existing package at the limit', async () => {
@@ -525,7 +512,7 @@ test('packageSave responses steer coding agents toward the git lane', async () =
 	expect(result.pending_secret_package_approvals).toBeNull()
 })
 
-test('packageSave allows below-max usage and denies at the max plan ceiling', async () => {
+test('packageSave allows creates below and at the max plan ceiling (self-hosted)', async () => {
 	const email = 'max@example.com'
 	const userId = await createStableUserIdFromEmail(email)
 	const maxLimit = planLimits.max.maxSavedPackages
@@ -589,25 +576,9 @@ test('packageSave allows below-max usage and denies at the max plan ceiling', as
 	})
 	setupPersistenceMocks()
 	const atCeilingCtx = createHandlerContext({ db: atCeilingDb, userId, email })
-	const error = await savePackageCapability
-		.handler(
-			{ files: buildPackageFiles('over-max-package', 'max') },
-			atCeilingCtx,
-		)
-		.then(
-			() => null,
-			(thrown: unknown) => thrown,
-		)
-	if (!isEntitlementLimitError(error)) {
-		throw new Error(
-			'Expected an EntitlementLimitError at the max package ceiling.',
-		)
-	}
-	expect(error.details).toMatchObject({
-		code: 'entitlement_limit_exceeded',
-		resource: 'saved_packages',
-		plan: 'max',
-		limit: maxLimit,
-		current: maxLimit,
-	})
+	await savePackageCapability.handler(
+		{ files: buildPackageFiles('over-max-package', 'max') },
+		atCeilingCtx,
+	)
+	expect(mockModule.ensureEntitySource).toHaveBeenCalled()
 })

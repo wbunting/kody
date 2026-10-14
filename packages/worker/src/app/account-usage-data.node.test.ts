@@ -132,7 +132,8 @@ test('loadAccountUsageData returns plan rows and authoritative UserMeter daily c
 	expect(baseline?.manualPlan).toBe('free')
 	expect(baseline?.stripePlan).toBe(null)
 	expect(baseline?.today).toBe('2026-07-25')
-	expect(currentFor(baseline, 'saved_packages')?.current).toBe(2)
+	// Self-hosted fork: saved packages are unlimited and not listed.
+	expect(currentFor(baseline, 'saved_packages')).toBeUndefined()
 	expect(currentFor(baseline, 'concurrent_workflows')?.current).toBe(0)
 
 	const bootstrapEmail = 'usage-bootstrap@example.com'
@@ -163,7 +164,8 @@ test('loadAccountUsageData returns plan rows and authoritative UserMeter daily c
 	})
 	expect(currentFor(bootstrapped, 'email_sends_per_day')?.current).toBe(17)
 	expect(currentFor(bootstrapped, 'execute_calls_per_day')?.current).toBe(91)
-	expect(currentFor(bootstrapped, 'saved_packages')?.current).toBe(1)
+	// Self-hosted fork: saved packages are unlimited and not listed.
+	expect(currentFor(bootstrapped, 'saved_packages')).toBeUndefined()
 
 	const meterEmail = 'usage-meter@example.com'
 	const meterUserId = testStableUserIdFromEmail(meterEmail)
@@ -220,7 +222,8 @@ test('loadAccountUsageData returns plan rows and authoritative UserMeter daily c
 	expect(authoritative?.weekStart).toBe('2026-07-20')
 	expect(currentFor(authoritative, 'concurrent_workflows')?.current).toBe(3)
 	expect(currentFor(authoritative, 'stored_email_messages')?.current).toBe(7)
-	expect(currentFor(authoritative, 'saved_packages')?.current).toBe(4)
+	// Self-hosted fork: saved packages are unlimited and not listed.
+	expect(currentFor(authoritative, 'saved_packages')).toBeUndefined()
 
 	const storageEmail = 'usage-storage@example.com'
 	const storageUserId = testStableUserIdFromEmail(storageEmail)
