@@ -12,6 +12,7 @@ export const localOriginDevVarKeys = [
 	'CLOUDFLARE_API_SOURCE_SNAPSHOTS',
 	'APP_BASE_URL',
 	'EXECUTE_CALL_LIMIT',
+	'PLAN_LIMITS',
 ] as const
 
 /**

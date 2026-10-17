@@ -179,8 +179,9 @@ export function computeMonthlyOverage(input: {
 	ladder: EntitlementLadder
 	uniqueWorkerDays: number
 	durableObjectRowsRead: number
+	limits?: ReturnType<typeof resolvePlanLimits>
 }): MonthlyComputeOverage {
-	const limits = resolvePlanLimits(input.plan, input.ladder)
+	const limits = input.limits ?? resolvePlanLimits(input.plan, input.ladder)
 	const uniqueWorkerDays = nonNegativeInteger(input.uniqueWorkerDays)
 	const durableObjectRowsRead = nonNegativeInteger(input.durableObjectRowsRead)
 	const includedUniqueWorkerDays = limits.maxUniqueWorkerDaysPerMonth

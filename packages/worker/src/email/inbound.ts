@@ -1,3 +1,4 @@
+import { resolveDeploymentPlanLimit as resolvePlanLimit } from '#worker/entitlements/selfhost-policy.ts'
 import { withAccountWriteLease } from '#worker/account/deletion-state.ts'
 import { findPublicUserIdentityByUsername } from '#worker/identity/user-lookup.ts'
 import { isEntitlementLimitError } from '#worker/entitlements/errors.ts'
@@ -5,7 +6,6 @@ import {
 	parseEntitlementLadder,
 	parseStoredPlanName,
 	resolveEffectivePlan,
-	resolvePlanLimit,
 } from '#universal/plans.ts'
 import {
 	assertWithinEntitlement,

@@ -1,11 +1,12 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 import { parseJsonc } from './ci/resource-utils.ts'
 import { writeLocalAuxiliaryDevConfig } from './local-auxiliary-dev-config.ts'
 
-test('local jobs config registers the service name and points back to the dev origin', async () => {
+test('local jobs config registers the service name and forwards self-host policy', async () => {
+	vi.stubEnv('PLAN_LIMITS', 'off')
 	const tempDir = await mkdtemp(path.join(os.tmpdir(), 'kody-local-jobs-'))
 	const sourcePath = path.join(tempDir, 'wrangler.jsonc')
 	try {
@@ -22,12 +23,14 @@ test('local jobs config registers the service name and points back to the dev or
 			env?: {
 				production?: {
 					name?: string
+					vars?: Record<string, string>
 					migrations?: unknown
 					services?: Array<{ service?: string }>
 				}
 			}
 		}>(await readFile(outputPath, 'utf8'))
 		expect(generated.env?.production?.name).toBe('kody-jobs')
+		expect(generated.env?.production?.vars?.PLAN_LIMITS).toBe('off')
 		expect(generated.env?.production?.services).toEqual([
 			expect.objectContaining({ service: 'kody-production' }),
 		])
@@ -36,6 +39,7 @@ test('local jobs config registers the service name and points back to the dev or
 		)
 		expect(generated.migrations).toEqual(generated.env?.production?.migrations)
 	} finally {
+		vi.unstubAllEnvs()
 		await rm(tempDir, { recursive: true, force: true })
 	}
 })

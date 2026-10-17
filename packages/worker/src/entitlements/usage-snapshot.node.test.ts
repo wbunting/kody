@@ -1,3 +1,4 @@
+import { env as workerEnv } from 'cloudflare:workers'
 import { expect, test } from 'vitest'
 import { utcDayKey } from '@kody-internal/shared/date-keys.ts'
 import { legacyPlanLimits, planLimits } from '#universal/plans.ts'
@@ -235,4 +236,47 @@ test('readEntitlementUsageSnapshot warns when the weekly window is hotter than t
 	expect(
 		snapshot.warnings.some((row) => row.resource === 'execute_calls_per_day'),
 	).toBe(true)
+})
+
+test('self-hosted usage preserves over-quota counts without weekly limits or warnings', async () => {
+	const now = new Date('2026-10-14T12:00:00.000Z')
+	const { stableUserId, db } = createUsageTestDb({
+		email: 'unlimited@example.com',
+	})
+	const env = withUsageEnv({ APP_DB: db })
+	await env.meter.seed({
+		userId: stableUserId,
+		resource: 'outbound_fetches_per_day',
+		day: utcDayKey(now),
+		count: 100_000,
+	})
+	const originalPolicy = workerEnv.PLAN_LIMITS
+	workerEnv.PLAN_LIMITS = 'off'
+	try {
+		const snapshot = await readEntitlementUsageSnapshot({
+			db,
+			env: env as Env,
+			usageUserId: stableUserId,
+			plan: 'free',
+			ladder: 'public',
+			now,
+		})
+		expect(
+			snapshot.resources.find(
+				(row) => row.resource === 'outbound_fetches_per_day',
+			),
+		).toMatchObject({
+			current: 100_000,
+			percentOfLimit: null,
+			overEightyPercent: false,
+		})
+		expect(snapshot.warnings).toEqual([])
+		expect(
+			snapshot.resources.find(
+				(row) => row.resource === 'outbound_fetches_per_day',
+			)?.week,
+		).toBeUndefined()
+	} finally {
+		workerEnv.PLAN_LIMITS = originalPolicy
+	}
 })

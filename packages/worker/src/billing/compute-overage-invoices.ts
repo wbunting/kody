@@ -1,3 +1,4 @@
+import { resolveDeploymentPlanLimits } from '#worker/entitlements/selfhost-policy.ts'
 /**
  * Monthly compute-overage invoicing. Reads `usage_rollups` for unique
  * worker days and Durable Object rows-read, prices the include-then-overage
@@ -276,6 +277,7 @@ async function invoiceOneUserIfNeeded(input: {
 		month: input.month,
 	})
 	const overage = computeMonthlyOverage({
+		limits: resolveDeploymentPlanLimits(plan, ladder, input.env),
 		plan,
 		ladder,
 		uniqueWorkerDays: usage.uniqueWorkerDays,

@@ -225,6 +225,21 @@ Optional Worker var:
   signup and social-login account creation return a controlled closed-
   registration response. Leave unset for the normal open-signup behavior.
 
+## Self-hosted plan quotas
+
+Optional Worker var:
+
+- `PLAN_LIMITS=off` disables plan-based quotas in a private/self-hosted
+  deployment: daily and weekly execute/fetch counts, job runs, resource counts,
+  storage, concurrent workflows, minimum job intervals, and monthly compute
+  includes/overage. Usage is still counted, but quota warnings are suppressed.
+  Set it on every worker (origin, platform, runtime, jobs); local multi-worker
+  dev forwards it from `.env`. Unset it to restore normal plan enforcement. This
+  does **not** bypass authentication, per-client access policy, secret grants,
+  request rate limits, sandbox deadlines, provider limits, or MIME/file size
+  bounds. Account usage APIs use a finite JSON-safe ceiling for uncapped
+  resources rather than `Infinity`.
+
 ## Execute call limit
 
 Optional Worker var:

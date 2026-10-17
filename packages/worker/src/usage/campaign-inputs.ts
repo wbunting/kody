@@ -1,3 +1,4 @@
+import { resolveDeploymentPlanLimits as resolvePlanLimits } from '#worker/entitlements/selfhost-policy.ts'
 import { utcMonthKey } from '@kody-internal/shared/date-keys.ts'
 import { jobsData } from '#worker/jobs/jobs-data.ts'
 import { resolveOAuthHelpers } from '#worker/oauth-helpers.ts'
@@ -6,7 +7,6 @@ import {
 	parseEntitlementLadder,
 	parseStoredPlanName,
 	parseStripePlanName,
-	resolvePlanLimits,
 } from '#universal/plans.ts'
 import { laterIsoTimestamp } from '#universal/referral-program.ts'
 import { resolveEffectivePlanWithSecondAgentGift } from '#universal/second-agent-standard-gift.ts'

@@ -1,3 +1,6 @@
+// Importable deployment vars for node tests; the default keeps hosted quotas.
+export const env: { PLAN_LIMITS?: string } = {}
+
 export class DurableObject<TEnv = unknown> {
 	protected readonly state: unknown
 	protected readonly env: TEnv

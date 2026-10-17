@@ -1,3 +1,4 @@
+import { env as workerEnv } from 'cloudflare:workers'
 import { getErrorMessage } from '@kody-internal/shared/error-message.ts'
 import { expect, test, vi } from 'vitest'
 import {
@@ -1625,5 +1626,57 @@ test('executeGatewayFetch rejects when allowOutboundFetch is false', async () =>
 		expect(recordUsageSpy).not.toHaveBeenCalled()
 	} finally {
 		recordUsageSpy.mockRestore()
+	}
+})
+
+test('self-host policy lets a fetch through an exhausted week but keeps retrievers closed', async () => {
+	const meter = createInMemoryUserMeterEnv()
+	const gatewayEnv = { ...env, ...meter.env }
+	const day = new Date().toISOString().slice(0, 10)
+	await meter.seed({
+		userId: props.userId,
+		resource: 'outbound_fetches_per_day',
+		day,
+		count: 2500,
+	})
+	const usageModule = await import('#worker/usage/record-usage.ts')
+	const usage = vi
+		.spyOn(usageModule, 'recordUsage')
+		.mockResolvedValue(undefined)
+	const globalFetch = vi.fn(async () => new Response('upstream reached'))
+	const originalPolicy = workerEnv.PLAN_LIMITS
+	try {
+		await expect(
+			executeGatewayFetch({
+				env: gatewayEnv,
+				props,
+				request: new Request('https://example.com'),
+				globalFetch: globalFetch as unknown as typeof fetch,
+			}),
+		).rejects.toMatchObject({
+			details: { resource: 'outbound_fetches_per_day' },
+		})
+		expect(globalFetch).not.toHaveBeenCalled()
+		workerEnv.PLAN_LIMITS = 'off'
+		const response = await executeGatewayFetch({
+			env: gatewayEnv,
+			props,
+			request: new Request('https://example.com'),
+			globalFetch: globalFetch as unknown as typeof fetch,
+		})
+		expect(await response.text()).toBe('upstream reached')
+		expect(globalFetch).toHaveBeenCalledTimes(1)
+		await expect(
+			executeGatewayFetch({
+				env: gatewayEnv,
+				props: { ...props, allowOutboundFetch: false },
+				request: new Request('https://example.com'),
+				globalFetch: globalFetch as unknown as typeof fetch,
+			}),
+		).rejects.toThrow('Outbound fetch is not available in retriever runs.')
+		expect(globalFetch).toHaveBeenCalledTimes(1)
+	} finally {
+		workerEnv.PLAN_LIMITS = originalPolicy
+		usage.mockRestore()
 	}
 })

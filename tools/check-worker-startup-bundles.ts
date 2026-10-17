@@ -191,7 +191,9 @@ const startupBundles: ReadonlyArray<StartupBundleDefinition> = [
 		// in this same entry, so line-anchor and file-anchor cannot stay
 		// on runtime alone. CI dry-run 5_145_618 against the previous
 		// 5_135_000 budget.
-		maxEntryBytes: 5_146_000,
+		// Self-hosted quota policy plus usage/overage callers: local
+		// dry-run 5_153_146 bytes (about 8 KB over the prior budget).
+		maxEntryBytes: 5_155_000,
 		forbiddenSources: [
 			...sharedDeferredGuideSources,
 			oauthProviderPackageSourcePath,
@@ -262,7 +264,9 @@ const startupBundles: ReadonlyArray<StartupBundleDefinition> = [
 		// slugs) on search entity, repoReadFile, and package file open pull
 		// line-anchor and file-anchor into runtime: CI dry-run 3_820_542
 		// against the previous 3_810_000 budget.
-		maxEntryBytes: 3_821_000,
+		// Self-hosted deployment policy and its usage/overage callers add
+		// ~6 KB to the runtime entry (3_826_222 in the local dry-run).
+		maxEntryBytes: 3_828_000,
 		forbiddenSources: [
 			...sharedDeferredGuideSources,
 			'/packages/worker/src/repo/repo-session-do.ts',

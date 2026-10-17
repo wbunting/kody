@@ -1,3 +1,4 @@
+import { resolveDeploymentPlanLimit as resolvePlanLimit } from '#worker/entitlements/selfhost-policy.ts'
 import { utcDayKey } from '@kody-internal/shared/date-keys.ts'
 import { type readAuthenticatedAppUser } from '#app/authenticated-user.ts'
 import {
@@ -27,7 +28,7 @@ import {
 	type EmailMessageRecord,
 	type EmailProcessingStatus,
 } from '#worker/email/types.ts'
-import { resolvePlanLimit, type PlanName } from '#universal/plans.ts'
+import { type PlanName } from '#universal/plans.ts'
 import {
 	getUserEntitlement,
 	readCurrentEntitlementResourceUsage,

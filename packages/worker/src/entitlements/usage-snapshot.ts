@@ -1,8 +1,11 @@
+import {
+	resolveDeploymentPlanLimit as resolvePlanLimit,
+	arePlanLimitsDisabled,
+} from '#worker/entitlements/selfhost-policy.ts'
 import { utcDayKey, utcWeekStart } from '@kody-internal/shared/date-keys.ts'
 import {
 	entitlementResourceLabels,
 	isWeeklyComputeWindowResource,
-	resolvePlanLimit,
 	resolveWeeklyPlanLimit,
 	type EntitlementLadder,
 	type EntitlementResource,
@@ -103,7 +106,9 @@ export async function readEntitlementUsageSnapshot(input: {
 			// usage) and a zero limit means the plan has no allowance, so a
 			// current/limit ratio is meaningless for both.
 			const percentOfLimit =
-				visibility.kind === 'per_unit_max' || limit === 0
+				arePlanLimitsDisabled() ||
+				visibility.kind === 'per_unit_max' ||
+				limit === 0
 					? null
 					: current / limit
 			const week = await readWeeklyUsageWindow({
@@ -150,7 +155,8 @@ async function readWeeklyUsageWindow(input: {
 	resource: EntitlementResource
 	now: Date
 }): Promise<EntitlementUsageWeekWindow | undefined> {
-	if (!isWeeklyComputeWindowResource(input.resource)) return undefined
+	if (arePlanLimitsDisabled() || !isWeeklyComputeWindowResource(input.resource))
+		return undefined
 	const limit = resolveWeeklyPlanLimit(input.plan, input.resource, input.ladder)
 	if (limit === null) return undefined
 	const current = await readWeeklyEntitlementResourceUsage({

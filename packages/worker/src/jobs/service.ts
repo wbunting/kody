@@ -1,3 +1,4 @@
+import { resolveDeploymentPlanLimits as resolvePlanLimits } from '#worker/entitlements/selfhost-policy.ts'
 import { type McpCallerContext } from '@kody-internal/shared/chat.ts'
 import { type ExecuteResult } from '@cloudflare/codemode'
 import { withAccountWriteLease } from '#worker/account/deletion-state.ts'
@@ -58,11 +59,7 @@ import {
 	consumeDailyEntitlement,
 	getCachedUserEntitlement,
 } from '#worker/entitlements/service.ts'
-import {
-	resolvePlanLimits,
-	type EntitlementLadder,
-	type PlanName,
-} from '#universal/plans.ts'
+import { type EntitlementLadder, type PlanName } from '#universal/plans.ts'
 import { resolveBackgroundMcpUser } from '#worker/identity/background-mcp-user.ts'
 import { assertPublishedSourceCanRebuildWithoutInstallingDeps } from '#worker/package-runtime/published-source-dependencies.ts'
 import {

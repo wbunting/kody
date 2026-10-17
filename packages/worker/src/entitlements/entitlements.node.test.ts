@@ -1,4 +1,7 @@
 import { expect, test } from 'vitest'
+import { env as workerEnv } from 'cloudflare:workers'
+import { computeMonthlyOverage } from '#universal/compute-overage.ts'
+import { resolveDeploymentPlanLimits } from './selfhost-policy.ts'
 import { createStableUserIdFromEmail } from '#worker/user-id.ts'
 import {
 	EntitlementLimitError,
@@ -1745,4 +1748,113 @@ test('legacy Pro and manual Pro grants keep pre-cut scheduled-job ceilings', asy
 			details: { plan: 'pro', limit: legacyLimit },
 		})
 	}
+})
+
+test('self-hosted deployment consumes past every plan quota without losing usage', async () => {
+	const { db } = createEntitlementsTestDb()
+	const meter = createInMemoryUserMeterEnv()
+	const now = new Date('2026-10-14T12:00:00.000Z')
+	const day = utcDayKey(now)
+	const userId = 'selfhost-unlimited'
+	await meter.seed({
+		userId,
+		resource: 'outbound_fetches_per_day',
+		day: '2026-10-12',
+		count: 2500,
+	})
+	await expect(
+		consumeDailyEntitlement({
+			db,
+			env: meter.env,
+			userId,
+			email: null,
+			resource: 'outbound_fetches_per_day',
+			now,
+		}),
+	).rejects.toMatchObject({ details: { window: 'week', limit: 2500 } })
+	const originalPolicy = workerEnv.PLAN_LIMITS
+	workerEnv.PLAN_LIMITS = 'off'
+	try {
+		for (const resource of [
+			'outbound_fetches_per_day',
+			'execute_calls_per_day',
+			'job_runs_per_day',
+			'email_sends_per_day',
+			'email_receives_per_day',
+		] as const) {
+			await meter.seed({ userId, resource, day, count: 100_000 })
+			await consumeDailyEntitlement({
+				db,
+				env: meter.env,
+				userId,
+				email: null,
+				resource,
+				now,
+			})
+			expect(
+				await readMeterDailyCount({ env: meter.env, userId, resource, now }),
+			).toBe(resource === 'outbound_fetches_per_day' ? 1 : 100_001)
+		}
+		for (const resource of [
+			'repos',
+			'saved_packages',
+			'scheduled_jobs',
+			'repo_sessions',
+			'secrets',
+			'stored_email_messages',
+			'concurrent_workflows',
+		] as const) {
+			await assertWithinEntitlement({
+				db,
+				userId,
+				email: null,
+				resource,
+				getCurrent: async () => 100_000,
+			})
+		}
+		await meter.seedStorageBytes({ userId, bytes: 100_000_000 })
+		await assertWithinStorageBytesEntitlement({
+			db,
+			env: meter.env,
+			userId,
+			email: null,
+			requested: 1234,
+		})
+		expect(
+			await userMeterRpc({ env: meter.env, userId }).readStorageBytes(),
+		).toMatchObject({ bytes: 100_001_234 })
+		const limits = resolveDeploymentPlanLimits('free')
+		expect(limits.minJobIntervalMs).toBe(0)
+		expect(
+			computeMonthlyOverage({
+				plan: 'free',
+				ladder: 'public',
+				limits,
+				uniqueWorkerDays: 100_000,
+				durableObjectRowsRead: 10_000_000_000,
+			}).totalCents,
+		).toBe(0)
+		await expect(
+			assertWithinEntitlement({
+				db,
+				userId,
+				email: null,
+				resource: 'email_message_bytes',
+				requested: 0,
+				getCurrent: async () => 1_000_000,
+			}),
+		).rejects.toBeInstanceOf(EntitlementLimitError)
+	} finally {
+		workerEnv.PLAN_LIMITS = originalPolicy
+	}
+	await expect(
+		consumeDailyEntitlement({
+			db,
+			env: meter.env,
+			userId,
+			email: null,
+			resource: 'outbound_fetches_per_day',
+			now,
+		}),
+	).rejects.toBeInstanceOf(EntitlementLimitError)
 })

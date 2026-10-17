@@ -235,6 +235,8 @@ export const EnvSchema = object({
 	// Self-hosted: `off` stops enforcing execute_calls_per_day (daily and
 	// weekly). Calls are still counted for usage surfaces.
 	EXECUTE_CALL_LIMIT: optionalNonEmptyStringSchema,
+	// Self-hosted: disable all plan quotas (technical safety bounds remain).
+	PLAN_LIMITS: optionalNonEmptyStringSchema,
 	USER_EMAIL_DOMAIN: optionalNonEmptyStringSchema,
 	// Overrides the system email domain derived from APP_BASE_URL. Committed
 	// in production so email and the web origin can move independently.

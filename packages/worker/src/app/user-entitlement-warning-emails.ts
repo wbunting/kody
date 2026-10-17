@@ -1,3 +1,4 @@
+import { resolveDeploymentPlanLimits } from '#worker/entitlements/selfhost-policy.ts'
 import { utcDayKey, utcMonthKey } from '@kody-internal/shared/date-keys.ts'
 import { sendCloudflareEmail } from '#app/email/cloudflare-email.ts'
 import {
@@ -670,6 +671,7 @@ async function readComputeOverageWarnings(input: {
 		month: utcMonthKey(input.now),
 	})
 	const overage = computeMonthlyOverage({
+		limits: resolveDeploymentPlanLimits(input.plan, input.ladder),
 		plan: input.plan,
 		ladder: input.ladder,
 		uniqueWorkerDays: usage.uniqueWorkerDays,

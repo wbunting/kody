@@ -1,3 +1,4 @@
+import { resolveDeploymentPlanLimits } from '#worker/entitlements/selfhost-policy.ts'
 import { utcMonthKey } from '@kody-internal/shared/date-keys.ts'
 import {
 	buildComputeOverageHowToReduce,
@@ -47,6 +48,7 @@ export async function readAccountComputeOverage(input: {
 		isComputeOverageChargingEnabled(input.db, input.userId),
 	])
 	const overage = computeMonthlyOverage({
+		limits: resolveDeploymentPlanLimits(input.plan, input.ladder),
 		plan: input.plan,
 		ladder: input.ladder,
 		uniqueWorkerDays: usage.uniqueWorkerDays,

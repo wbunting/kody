@@ -92,6 +92,7 @@ export async function writeLocalRuntimeDevConfig({
 		'CLOUDFLARE_API_SOURCE_SNAPSHOTS',
 		// Self-hosted policy; MCP execute runs on the platform worker.
 		'EXECUTE_CALL_LIMIT',
+		'PLAN_LIMITS',
 	]) {
 		const value = process.env[key]
 		if (value) vars[key] = value

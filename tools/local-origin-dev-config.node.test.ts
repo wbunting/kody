@@ -12,10 +12,12 @@ test('keeps an explicit APP_BASE_URL and does not invent Cloudflare vars', () =>
 		collectLocalOriginDevVars({
 			WRANGLER_IS_LOCAL_DEV: 'true',
 			APP_BASE_URL: 'http://localhost:4000',
+			PLAN_LIMITS: 'off',
 		}),
 	).toEqual({
 		WRANGLER_IS_LOCAL_DEV: 'true',
 		APP_BASE_URL: 'http://localhost:4000',
+		PLAN_LIMITS: 'off',
 	})
 })
 

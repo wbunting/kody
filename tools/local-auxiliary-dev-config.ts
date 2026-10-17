@@ -31,6 +31,12 @@ export async function writeLocalAuxiliaryDevConfig({
 	// worker name. Keep it equal to the origin's service binding target instead
 	// of Wrangler's default `<name>-<env>` suffix.
 	envRecord.name = workerName
+	if (process.env.PLAN_LIMITS) {
+		envRecord.vars = {
+			...(envRecord.vars as JsonRecord | undefined),
+			PLAN_LIMITS: process.env.PLAN_LIMITS,
+		}
+	}
 
 	const services = envRecord.services
 	if (Array.isArray(services)) {

@@ -1,10 +1,13 @@
+import {
+	resolveDeploymentPlanLimit as resolvePlanLimit,
+	arePlanLimitsDisabled,
+} from '#worker/entitlements/selfhost-policy.ts'
 import { utcDayKey, utcWeekStart } from '@kody-internal/shared/date-keys.ts'
 import { type JobsStore } from '@kody-internal/shared/jobs/store.ts'
 import {
 	isWeeklyComputeWindowResource,
 	parseEntitlementLadder,
 	parseStoredPlanName,
-	resolvePlanLimit,
 	resolveWeeklyPlanLimit,
 	type EntitlementResource,
 	type PlanName,
@@ -1046,8 +1049,14 @@ export const unenforcedEntitlementResources: ReadonlySet<EntitlementResource> =
 export async function assertWithinEntitlement(
 	input: AssertWithinEntitlementInput,
 ): Promise<void> {
-	// Self-hosted fork: saved packages are unlimited on every plan.
-	if (unenforcedEntitlementResources.has(input.resource)) return
+	// Self-hosted deployments can disable plan quotas; per-message MIME
+	// bounds remain technical limits. Saved packages are always uncapped.
+	if (
+		input.resource !== 'email_message_bytes' &&
+		(arePlanLimitsDisabled() ||
+			unenforcedEntitlementResources.has(input.resource))
+	)
+		return
 	// Cached plan resolution: quota limit lookup tolerates short-TTL
 	// staleness; usage counters below stay fresh on every call.
 	const entitlement = await getCachedUserEntitlement(input.db, {
@@ -1127,11 +1136,12 @@ export async function consumeDailyEntitlement(
 		email: input.email,
 	})
 	const plan = entitlement.plan
-	const limit = input.unlimited
+	const unlimited = input.unlimited || arePlanLimitsDisabled()
+	const limit = unlimited
 		? Number.MAX_SAFE_INTEGER
 		: resolvePlanLimit(plan, resource, entitlement.ladder)
 	const weekLimit =
-		!input.unlimited && isWeeklyComputeWindowResource(resource)
+		!unlimited && isWeeklyComputeWindowResource(resource)
 			? resolveWeeklyPlanLimit(plan, resource, entitlement.ladder)
 			: null
 	const weekStart = weekLimit === null ? undefined : utcWeekStart(now)

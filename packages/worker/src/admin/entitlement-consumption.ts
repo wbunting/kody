@@ -1,6 +1,9 @@
 import {
+	resolveDeploymentPlanLimit as resolvePlanLimit,
+	arePlanLimitsDisabled,
+} from '#worker/entitlements/selfhost-policy.ts'
+import {
 	entitlementResourceLabels,
-	resolvePlanLimit,
 	type EntitlementLadder,
 	type EntitlementResource,
 	type PlanName,
@@ -49,7 +52,8 @@ export async function readAdminEntitlementConsumption(input: {
 				now: input.now,
 			})
 			const limit = resolvePlanLimit(input.plan, resource, input.ladder)
-			const percentOfLimit = limit === 0 ? null : current / limit
+			const percentOfLimit =
+				arePlanLimitsDisabled() || limit === 0 ? null : current / limit
 			return {
 				resource,
 				label: entitlementResourceLabels[resource],
